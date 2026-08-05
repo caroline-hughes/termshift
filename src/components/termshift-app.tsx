@@ -23,6 +23,7 @@ import {
 	buildOpportunitySuggestions,
 	type OpportunitySuggestion,
 } from "@/lib/termshift-opportunities";
+import { TermShiftLogo } from "@/components/termshift-logo";
 import type {
 	CourseBucket,
 	DerivedTerm,
@@ -35,7 +36,9 @@ import type {
 
 type ActiveView = "profile" | "plan" | "search";
 type ResizeEdge = "start" | "end";
-type SchoolOption = "Northeastern University" | "Columbia University";
+type SchoolOption = "" | "Northeastern University" | "Columbia University";
+type MajorOption = "" | "BS CS" | "MS AI";
+type DemoProfileKey = "inProgress" | "sophomore";
 
 type DragPayload =
 	| { type: "course"; courseId: string }
@@ -66,7 +69,14 @@ type BlockContextMenu = {
 
 type IdentityState = {
 	fullName: string;
+	major: MajorOption;
 	school: SchoolOption;
+};
+
+type ProcessingState = {
+	documentName: string;
+	documentUrl: string;
+	phase: "loading" | "scanning";
 };
 
 type UploadState = {
@@ -84,6 +94,7 @@ type PersistedSession = {
 	savedPlannerState: PlannerState;
 	savedScenarios: SavedScenario[];
 	selectedOpportunityId: string | null;
+	uploadedDocumentUrl?: string | null;
 };
 
 type OpportunityPreview = OpportunitySuggestion & {
@@ -116,10 +127,53 @@ type SaveScenarioModalState = {
 const APP_STORAGE_KEY = "termshift-session-v1";
 
 const TERM_ORDER: TermKind[] = ["fall", "spring", "summer1", "summer2"];
-const SCHOOL_OPTIONS: SchoolOption[] = [
+const SCHOOL_OPTIONS: Exclude<SchoolOption, "">[] = [
 	"Northeastern University",
 	"Columbia University",
 ];
+const MAJOR_OPTIONS_BY_SCHOOL: Record<
+	Exclude<SchoolOption, "">,
+	Exclude<MajorOption, "">[]
+> = {
+	"Columbia University": ["MS AI"],
+	"Northeastern University": ["BS CS"],
+};
+const MAJOR_LABELS: Record<Exclude<MajorOption, "">, string> = {
+	"BS CS": "B.S. in Computer Science",
+	"MS AI": "M.S. in Artificial Intelligence",
+};
+const PROGRAM_LABELS: Record<Exclude<MajorOption, "">, string> = {
+	"BS CS": "B.S. in Computer Science",
+	"MS AI": "M.S. in Artificial Intelligence",
+};
+const SAMPLE_AUDITS: Record<
+	DemoProfileKey,
+	{
+		documentName: string;
+		label: string;
+		major: Exclude<MajorOption, "">;
+		profileKey: DemoProfileKey;
+		school: Exclude<SchoolOption, "">;
+		url: string;
+	}
+> = {
+	inProgress: {
+		documentName: "caroline-hughes-in-progress-unofficial-transcript.pdf",
+		label: "In-progress sample",
+		major: "BS CS",
+		profileKey: "inProgress",
+		school: "Northeastern University",
+		url: "/demo-transcripts/caroline-hughes-in-progress-unofficial-transcript.pdf",
+	},
+	sophomore: {
+		documentName: "caroline-hughes-sophomore-unofficial-transcript.pdf",
+		label: "Example degree audit",
+		major: "BS CS",
+		profileKey: "sophomore",
+		school: "Northeastern University",
+		url: "/demo-transcripts/caroline-hughes-sophomore-unofficial-transcript.pdf",
+	},
+};
 
 const TERM_LABELS: Record<TermKind, string> = {
 	fall: "Fall",
@@ -157,8 +211,9 @@ const COURSE_TONES: Record<CourseBucket, string> = {
 
 function createDefaultIdentity(): IdentityState {
 	return {
-		fullName: "Caroline Hughes",
-		school: "Northeastern University",
+		fullName: "",
+		major: "",
+		school: "",
 	};
 }
 
@@ -223,7 +278,11 @@ function getAcademicYearKey(term: DerivedTerm["term"]) {
 	return term.kind === "fall" ? term.year : term.year - 1;
 }
 
-function buildYearRows(terms: DerivedTerm[], startYear: number): YearRow[] {
+function buildAcademicYearLabel(startYear: number) {
+	return `${startYear}\u2013${String(startYear + 1).slice(-2)}`;
+}
+
+function buildYearRows(terms: DerivedTerm[]): YearRow[] {
 	const rows = new Map<number, YearRow>();
 
 	for (const derivedTerm of terms) {
@@ -232,7 +291,7 @@ function buildYearRows(terms: DerivedTerm[], startYear: number): YearRow[] {
 		if (!rows.has(key)) {
 			rows.set(key, {
 				key,
-				label: `Year ${key - startYear + 1}`,
+				label: buildAcademicYearLabel(key),
 				terms: {},
 			});
 		}
@@ -426,31 +485,77 @@ function buildBlockLabels(blockGroups: Map<string, BlockGroup>) {
 	return labels;
 }
 
-function buildDemoProfile(fileName: string) {
+function buildDemoProfile(
+	fileName: string,
+	profileKey: DemoProfileKey = "sophomore",
+) {
 	return {
-		...DEMO_PROFILES.sophomore,
+		...DEMO_PROFILES[profileKey],
 		uploadedAt: new Date().toISOString(),
 		uploadedFileName: fileName,
 		parserNote:
-			"Used the seeded Northeastern sophomore profile for the MVP demo state.",
+			profileKey === "inProgress"
+				? "Used the seeded Northeastern in-progress profile for the MVP demo state."
+				: "Used the seeded Northeastern sophomore profile for the MVP demo state.",
 	};
+}
+
+function findSampleAuditByDocumentName(fileName: string) {
+	return (
+		Object.values(SAMPLE_AUDITS).find(
+			(sampleAudit) => sampleAudit.documentName === fileName,
+		) ?? null
+	);
 }
 
 function applyIdentityToProfile(
 	baseProfile: StudentProfile,
 	identity: IdentityState,
 ): StudentProfile {
+	const school = identity.school || baseProfile.school;
+	const program =
+		identity.major && identity.major in PROGRAM_LABELS
+			? PROGRAM_LABELS[identity.major as Exclude<MajorOption, "">]
+			: baseProfile.program;
 	const parserNote =
-		identity.school === "Northeastern University"
+		school === "Northeastern University"
 			? baseProfile.parserNote
 			: `${baseProfile.parserNote} Degree-path modeling in this MVP is still seeded to Northeastern CS requirements while TermShift's onboarding and co-op search stay school-aware.`;
 
 	return {
 		...baseProfile,
-		label: `${identity.fullName} · academic snapshot`,
-		school: identity.school,
+		label: `${identity.fullName || "Demo Student"} · academic snapshot`,
+		program,
+		school,
 		parserNote,
 	};
+}
+
+function delay(ms: number) {
+	return new Promise((resolve) => {
+		window.setTimeout(resolve, ms);
+	});
+}
+
+function readFileAsDataUrl(file: File) {
+	return new Promise<string>((resolve, reject) => {
+		const reader = new FileReader();
+
+		reader.onload = () => {
+			if (typeof reader.result === "string") {
+				resolve(reader.result);
+				return;
+			}
+
+			reject(new Error("Unable to read file."));
+		};
+
+		reader.onerror = () => {
+			reject(reader.error ?? new Error("Unable to read file."));
+		};
+
+		reader.readAsDataURL(file);
+	});
 }
 
 async function extractUploadText(file: File) {
@@ -533,6 +638,9 @@ export function TermShiftApp() {
 		selectedFileName: "",
 		status: "idle",
 	});
+	const [demoMaterialsOpen, setDemoMaterialsOpen] = useState(false);
+	const [processingState, setProcessingState] =
+		useState<ProcessingState | null>(null);
 	const [saveScenarioModal, setSaveScenarioModal] =
 		useState<SaveScenarioModalState>({
 			defaultTitle: "",
@@ -549,6 +657,7 @@ export function TermShiftApp() {
 	const [didHydrate, setDidHydrate] = useState(false);
 	const uploadedDocumentUrlRef = useRef<string | null>(null);
 	const profileHighlightTimeoutRef = useRef<number | null>(null);
+	const processingRunRef = useRef(0);
 
 	useEffect(() => {
 		let cancelled = false;
@@ -566,11 +675,23 @@ export function TermShiftApp() {
 				const parsed = JSON.parse(raw) as PersistedSession;
 
 				if (parsed.identity) {
-					setIdentity(parsed.identity);
+					setIdentity({
+						...createDefaultIdentity(),
+						...parsed.identity,
+						major: parsed.identity.major ?? "",
+						school: parsed.identity.school ?? "",
+					});
 				}
 
 				if (parsed.profile) {
 					setProfile(parsed.profile);
+					replaceUploadedDocumentUrl(
+						parsed.uploadedDocumentUrl ??
+							findSampleAuditByDocumentName(
+								parsed.profile.uploadedFileName,
+							)?.url ??
+							null,
+					);
 					setUploadState({
 						message: parsed.profile.parserNote,
 						selectedFileName: parsed.profile.uploadedFileName,
@@ -622,6 +743,7 @@ export function TermShiftApp() {
 			savedPlannerState,
 			savedScenarios,
 			selectedOpportunityId,
+			uploadedDocumentUrl,
 		};
 
 		window.localStorage.setItem(APP_STORAGE_KEY, JSON.stringify(session));
@@ -635,6 +757,7 @@ export function TermShiftApp() {
 		savedPlannerState,
 		savedScenarios,
 		selectedOpportunityId,
+		uploadedDocumentUrl,
 	]);
 
 	useEffect(() => {
@@ -661,6 +784,8 @@ export function TermShiftApp() {
 
 	useEffect(() => {
 		return () => {
+			processingRunRef.current += 1;
+
 			if (profileHighlightTimeoutRef.current) {
 				window.clearTimeout(profileHighlightTimeoutRef.current);
 			}
@@ -684,10 +809,7 @@ export function TermShiftApp() {
 	const displayedPlannerState = experimentMode
 		? plannerState
 		: savedPlannerState;
-	const yearRows =
-		profile && snapshot
-			? buildYearRows(snapshot.terms, profile.startYear)
-			: [];
+	const yearRows = profile && snapshot ? buildYearRows(snapshot.terms) : [];
 	const lockedThroughIndex = profile
 		? getTermIndex(profile.lockedThroughTermId)
 		: -1;
@@ -745,6 +867,13 @@ export function TermShiftApp() {
 		? currentFingerprint !== activeScenarioFingerprint
 		: hasExperimentChanges;
 	const requirementsLinkLabel = "Degree requirements";
+	const availableMajorOptions = identity.school
+		? MAJOR_OPTIONS_BY_SCHOOL[identity.school]
+		: [];
+	const landingIntakeReady =
+		identity.fullName.trim().length > 0 &&
+		Boolean(identity.school) &&
+		Boolean(identity.major);
 
 	function isFutureTerm(termId: string) {
 		return profile ? getTermIndex(termId) > lockedThroughIndex : false;
@@ -1167,6 +1296,167 @@ export function TermShiftApp() {
 		setActiveView("plan");
 	}
 
+	function finalizeProfileLoad(
+		nextProfile: StudentProfile,
+		fileName: string,
+		nextUploadedDocumentUrl: string | null,
+		message: string,
+	) {
+		setProfile(nextProfile);
+		replaceUploadedDocumentUrl(nextUploadedDocumentUrl);
+		setPlannerState(clonePlannerState(DEFAULT_PLANNER_STATE));
+		setSavedPlannerState(clonePlannerState(DEFAULT_PLANNER_STATE));
+		setSavedScenarios([]);
+		setActiveScenarioId(null);
+		setSelectedOpportunityId(null);
+		setBrowseOpportunityId(null);
+		setExperimentMode(false);
+		setSaveScenarioModal({
+			defaultTitle: "",
+			isOpen: false,
+			value: "",
+		});
+		setPendingUpload(null);
+		setUploadState({
+			message,
+			selectedFileName: fileName,
+			status: "ready",
+		});
+		setProcessingState(null);
+		setActiveView("plan");
+	}
+
+	async function startInitialProcessing(demoProfileKey?: DemoProfileKey) {
+		const sampleAudit = demoProfileKey
+			? SAMPLE_AUDITS[demoProfileKey]
+			: null;
+		const nextIdentity: IdentityState = sampleAudit
+			? {
+					fullName: identity.fullName.trim() || "Caroline Hughes",
+					major: sampleAudit.major,
+					school: sampleAudit.school,
+			  }
+			: identity;
+		const fileName = sampleAudit?.documentName ?? pendingUpload?.name;
+
+		if (
+			!nextIdentity.fullName.trim() ||
+			!nextIdentity.school ||
+			!nextIdentity.major ||
+			!fileName
+		) {
+			return;
+		}
+
+		const runId = processingRunRef.current + 1;
+		processingRunRef.current = runId;
+		setIdentity(nextIdentity);
+		setDemoMaterialsOpen(false);
+		setUploadState({
+			message: sampleAudit
+				? "Opening the example degree audit."
+				: "Preparing your degree audit.",
+			selectedFileName: fileName,
+			status: "processing",
+		});
+
+		let documentUrl: string | null = sampleAudit?.url ?? null;
+
+		if (!documentUrl && pendingUpload) {
+			try {
+				documentUrl = await readFileAsDataUrl(pendingUpload);
+			} catch {
+				documentUrl = null;
+			}
+		}
+
+		if (!documentUrl) return;
+
+		setProcessingState({
+			documentName: fileName,
+			documentUrl,
+			phase: "loading",
+		});
+
+		const loadProfilePromise = (async () => {
+			try {
+				let extractedText = "";
+
+				if (!sampleAudit && pendingUpload) {
+					try {
+						extractedText = await extractUploadText(pendingUpload);
+					} catch {
+						extractedText = "";
+					}
+				}
+
+				const baseProfile = sampleAudit
+					? buildDemoProfile(fileName, sampleAudit.profileKey)
+					: buildProfileFromUpload(fileName, extractedText);
+				const nextProfile = applyIdentityToProfile(
+					baseProfile,
+					nextIdentity,
+				);
+
+				return {
+					message: nextProfile.parserNote,
+					nextProfile,
+				};
+			} catch {
+				const fallbackProfile = applyIdentityToProfile(
+					buildDemoProfile(
+						fileName,
+						sampleAudit?.profileKey ?? "sophomore",
+					),
+					nextIdentity,
+				);
+
+				return {
+					message: sampleAudit
+						? fallbackProfile.parserNote
+						: "Upload received. TermShift opened the seeded Northeastern BSCS demo model for this file.",
+					nextProfile: fallbackProfile,
+				};
+			}
+		})();
+
+		await delay(650);
+
+		if (processingRunRef.current !== runId) {
+			if (documentUrl.startsWith("blob:")) {
+				URL.revokeObjectURL(documentUrl);
+			}
+			return;
+		}
+
+		setProcessingState((current) =>
+			current
+				? {
+						...current,
+						phase: "scanning",
+				  }
+				: current,
+		);
+
+		const result = await loadProfilePromise;
+
+		await delay(1550);
+
+		if (processingRunRef.current !== runId) {
+			if (documentUrl.startsWith("blob:")) {
+				URL.revokeObjectURL(documentUrl);
+			}
+			return;
+		}
+
+		finalizeProfileLoad(
+			result.nextProfile,
+			fileName,
+			documentUrl,
+			result.message,
+		);
+	}
+
 	async function completeProfile(useSeededDemo = false) {
 		const fileName =
 			pendingUpload?.name ??
@@ -1183,10 +1473,16 @@ export function TermShiftApp() {
 		});
 
 		try {
-			const extractedText =
-				useSeededDemo || !pendingUpload
-					? ""
-					: await extractUploadText(pendingUpload);
+			let extractedText = "";
+
+			if (!useSeededDemo && pendingUpload) {
+				try {
+					extractedText = await extractUploadText(pendingUpload);
+				} catch {
+					extractedText = "";
+				}
+			}
+
 			const baseProfile =
 				useSeededDemo || !pendingUpload
 					? buildDemoProfile(fileName)
@@ -1195,36 +1491,26 @@ export function TermShiftApp() {
 			const nextUploadedDocumentUrl =
 				useSeededDemo || !pendingUpload
 					? null
-					: URL.createObjectURL(pendingUpload);
+					: await readFileAsDataUrl(pendingUpload);
 
-			setProfile(nextProfile);
-			replaceUploadedDocumentUrl(nextUploadedDocumentUrl);
-			setPlannerState(clonePlannerState(DEFAULT_PLANNER_STATE));
-			setSavedPlannerState(clonePlannerState(DEFAULT_PLANNER_STATE));
-			setSavedScenarios([]);
-			setActiveScenarioId(null);
-			setSelectedOpportunityId(null);
-			setBrowseOpportunityId(null);
-			setExperimentMode(false);
-			setSaveScenarioModal({
-				defaultTitle: "",
-				isOpen: false,
-				value: "",
-			});
-			setPendingUpload(null);
-			setUploadState({
-				message: nextProfile.parserNote,
-				selectedFileName: fileName,
-				status: "ready",
-			});
-			setActiveView("plan");
+			finalizeProfileLoad(
+				nextProfile,
+				fileName,
+				nextUploadedDocumentUrl,
+				nextProfile.parserNote,
+			);
 		} catch {
-			setUploadState({
-				message:
-					"TermShift could not read that file cleanly. Try the seeded demo fallback for now.",
-				selectedFileName: fileName,
-				status: "error",
-			});
+			const fallbackProfile = applyIdentityToProfile(
+				buildDemoProfile(fileName),
+				identity,
+			);
+
+			finalizeProfileLoad(
+				fallbackProfile,
+				fileName,
+				null,
+				"Upload received. TermShift opened the seeded Northeastern BSCS demo model for this file.",
+			);
 		}
 	}
 
@@ -1240,6 +1526,52 @@ export function TermShiftApp() {
 			selectedFileName: file.name,
 			status: "idle",
 		});
+	}
+
+	function resetToLanding() {
+		processingRunRef.current += 1;
+		window.localStorage.removeItem(APP_STORAGE_KEY);
+		replaceUploadedDocumentUrl(null);
+
+		if (processingState?.documentUrl.startsWith("blob:")) {
+			URL.revokeObjectURL(processingState.documentUrl);
+		}
+
+		setProfile(null);
+		setIdentity(createDefaultIdentity());
+		setPlannerState(clonePlannerState(DEFAULT_PLANNER_STATE));
+		setSavedPlannerState(clonePlannerState(DEFAULT_PLANNER_STATE));
+		setSavedScenarios([]);
+		setActiveScenarioId(null);
+		setSelectedOpportunityId(null);
+		setBrowseOpportunityId(null);
+		setExperimentMode(false);
+		setSidebarCollapsed(false);
+		setPendingUpload(null);
+		setProcessingState(null);
+		setDemoMaterialsOpen(false);
+		setBlockContextMenu(null);
+		setHighlightedProfileSection(null);
+		setSaveScenarioModal({
+			defaultTitle: "",
+			isOpen: false,
+			value: "",
+		});
+		setUploadState({
+			message: "",
+			selectedFileName: "",
+			status: "idle",
+		});
+		setActiveView("profile");
+	}
+
+	function renderScreenTitle(title: string) {
+		return (
+			<div className="screen-title-row">
+				<TermShiftLogo className="termshift-logo--screen-title" />
+				<h1 className="screen-title">{title}</h1>
+			</div>
+		);
 	}
 
 	function renderCourse(course: ScheduledCourse, termId: string) {
@@ -1397,114 +1729,337 @@ export function TermShiftApp() {
 		);
 	}
 
+	function renderProcessingScreen() {
+		if (!processingState) return null;
+
+		if (processingState.phase === "loading") {
+			return (
+				<section className="processing-screen processing-screen--loading">
+					<div className="processing-loader">
+						<div
+							className="processing-loader-mark"
+							aria-hidden="true"
+						>
+							<span />
+							<span />
+							<span />
+						</div>
+						<h1 className="screen-title">Preparing your plan.</h1>
+						<p className="screen-intro">
+							TermShift is opening your degree audit and building
+							the baseline academic path.
+						</p>
+					</div>
+				</section>
+			);
+		}
+
+		return (
+			<section className="processing-screen">
+				<header className="processing-header">
+					<h1 className="screen-title">
+						Scanning your degree audit.
+					</h1>
+					<p className="screen-intro">
+						TermShift is reading completed coursework, mapping
+						in-progress terms, and preparing your path plan.
+					</p>
+				</header>
+
+				<div className="processing-layout">
+					<div className="processing-document-shell">
+						<div className="processing-document-topline">
+							<span className="profile-label">Degree Audit</span>
+							<span className="processing-document-name">
+								{processingState.documentName}
+							</span>
+						</div>
+						<div className="processing-document-frame-wrap">
+							<iframe
+								title={processingState.documentName}
+								src={processingState.documentUrl}
+								className="processing-document-frame"
+							/>
+							<div
+								className="processing-scan-overlay"
+								aria-hidden="true"
+							>
+								<div className="processing-scan-line" />
+								<div className="processing-scan-grid" />
+							</div>
+						</div>
+					</div>
+
+					<aside className="processing-panel">
+						<p className="profile-label">Profile</p>
+						<p className="processing-panel-value">
+							{identity.fullName || "Demo Student"}
+						</p>
+						<p className="processing-panel-meta">
+							{identity.school || "Northeastern University"}
+						</p>
+						<p className="processing-panel-meta">
+							{identity.major
+								? PROGRAM_LABELS[
+										identity.major as Exclude<
+											MajorOption,
+											""
+										>
+								  ]
+								: "BS CS · Software concentration"}
+						</p>
+
+						<div className="processing-steps">
+							<div className="processing-step is-complete">
+								<span className="processing-step-dot" />
+								<span>Opening uploaded document</span>
+							</div>
+							<div className="processing-step is-active">
+								<span className="processing-step-dot" />
+								<span>Scanning courses and term history</span>
+							</div>
+							<div className="processing-step">
+								<span className="processing-step-dot" />
+								<span>Building baseline degree plan</span>
+							</div>
+						</div>
+					</aside>
+				</div>
+			</section>
+		);
+	}
+
 	function renderProfileScreen() {
 		if (!profile) {
 			return (
-				<section className="pathwise-screen">
-					<header className="screen-header">
-						<h1 className="screen-title">Complete Profile</h1>
+				<section className="landing-screen">
+					<TermShiftLogo
+						size={152}
+						className="termshift-logo--landing"
+					/>
+
+					<div className="landing-copy">
+						<h1 className="screen-title">
+							Graduate with more than a diploma.
+						</h1>
 						<p className="screen-intro">
-							Pick your school, upload your unofficial transcript
-							or degree audit, and let TermShift seed the baseline
-							plan before you start testing work terms.
+							The best time to get your first real industry
+							experience isn&apos;t after graduation; it&apos;s
+							during college.
 						</p>
-					</header>
+						<p className="screen-intro">
+							Universities across North America now support
+							co-ops, internships, and semester-long work terms
+							for academic credit. <br></br>But figuring out when
+							you can take one, which jobs you&apos;re qualified
+							for, and whether it will delay graduation is
+							surprisingly difficult.
+						</p>
+						<p className="screen-intro">
+							<strong>TermShift</strong> helps you discover
+							opportunities that fit your academic plan, then
+							models exactly how each one affects your degree
+							timeline, so you can graduate with both a diploma
+							and real experience.
+						</p>
+					</div>
 
-					<div className="profile-form-wrap">
-						<label className="form-field">
-							<span className="profile-label">Full Name</span>
-							<input
-								type="text"
-								value={identity.fullName}
-								className="profile-input"
-								onChange={(event) =>
-									setIdentity((current) => ({
-										...current,
-										fullName: event.target.value,
-									}))
-								}
-							/>
-						</label>
+					<div className="landing-setup">
+						<p className="landing-setup-title">
+							Get started today by uploading an unofficial
+							transcript or degree audit.
+						</p>
 
-						<label className="form-field">
-							<span className="profile-label">School</span>
-							<select
-								value={identity.school}
-								className="profile-input"
-								onChange={(event) =>
-									setIdentity((current) => ({
-										...current,
-										school: event.target
-											.value as SchoolOption,
-									}))
-								}
-							>
-								{SCHOOL_OPTIONS.map((school) => (
-									<option key={school} value={school}>
-										{school}
+						<div className="landing-setup-grid landing-setup-grid--intake">
+							<label className="form-field">
+								<span className="profile-label">Full Name</span>
+								<input
+									type="text"
+									value={identity.fullName}
+									className="profile-input"
+									onChange={(event) =>
+										setIdentity((current) => ({
+											...current,
+											fullName: event.target.value,
+										}))
+									}
+								/>
+							</label>
+
+							<label className="form-field">
+								<span className="profile-label">School</span>
+								<select
+									value={identity.school}
+									className="profile-input profile-input--select"
+									onChange={(event) =>
+										setIdentity((current) => ({
+											...current,
+											major:
+												current.school ===
+												event.target.value
+													? current.major
+													: "",
+											school: event.target
+												.value as SchoolOption,
+										}))
+									}
+								>
+									<option value="">Select school</option>
+									{SCHOOL_OPTIONS.map((school) => (
+										<option key={school} value={school}>
+											{school}
+										</option>
+									))}
+								</select>
+							</label>
+
+							<label className="form-field">
+								<span className="profile-label">Major</span>
+								<select
+									value={identity.major}
+									disabled={!identity.school}
+									className="profile-input profile-input--select"
+									onChange={(event) =>
+										setIdentity((current) => ({
+											...current,
+											major: event.target
+												.value as MajorOption,
+										}))
+									}
+								>
+									<option value="">
+										{identity.school
+											? "Select major"
+											: "Select school first"}
 									</option>
-								))}
-							</select>
-						</label>
+									{availableMajorOptions.map((major) => (
+										<option key={major} value={major}>
+											{MAJOR_LABELS[major]}
+										</option>
+									))}
+								</select>
+							</label>
+						</div>
 
-						<div className="form-field">
-							<span className="profile-label">
-								Transcript Or Degree Audit
-							</span>
-							<div className="upload-row">
-								<label className="plan-action-button upload-button">
-									Upload transcript
+						<div
+							className={`landing-next-step ${
+								landingIntakeReady ? "is-visible" : ""
+							}`}
+							aria-hidden={!landingIntakeReady}
+						>
+							<div className="landing-upload-row">
+								<label className="plan-action-button plan-action-button--primary upload-button">
+									Upload degree audit
 									<input
 										type="file"
-										accept=".pdf,.txt"
+										accept=".pdf"
 										className="upload-input"
 										onChange={handleFileSelection}
 									/>
 								</label>
-								<span className="upload-file-name">
-									{pendingUpload?.name ?? "No file selected"}
-								</span>
+								<button
+									type="button"
+									disabled={
+										!pendingUpload ||
+										uploadState.status === "processing"
+									}
+									className="plan-action-button"
+									onClick={() => startInitialProcessing()}
+								>
+									Continue
+								</button>
 							</div>
-						</div>
 
-						{identity.school === "Columbia University" ? (
-							<p className="inline-note">
-								Search is school-aware for both schools.
-								Degree-path modeling in this MVP still uses the
-								Northeastern CS ruleset behind the scenes.
+							<p className="upload-file-name landing-file-name">
+								{pendingUpload?.name ?? ""}
 							</p>
-						) : null}
 
-						{uploadState.message ? (
-							<p
-								className={`inline-note inline-note--${uploadState.status}`}
-							>
-								{uploadState.message}
-							</p>
-						) : null}
-
-						<div className="form-actions">
 							<button
 								type="button"
-								disabled={
-									!pendingUpload ||
-									uploadState.status === "processing"
+								className="landing-demo-trigger"
+								onClick={() =>
+									setDemoMaterialsOpen((current) => !current)
 								}
-								className="plan-action-button plan-action-button--primary"
-								onClick={() => completeProfile(false)}
 							>
-								{uploadState.status === "processing"
-									? "Processing"
-									: "Complete profile"}
+								<span
+									aria-hidden="true"
+									className="landing-demo-trigger-caret"
+								>
+									{demoMaterialsOpen ? "▾" : "▸"}
+								</span>
+								<span className="landing-demo-trigger-label">
+									Test / demo materials
+								</span>
 							</button>
-							<button
-								type="button"
-								className="plan-action-button"
-								disabled={uploadState.status === "processing"}
-								onClick={() => completeProfile(true)}
-							>
-								Use seeded demo
-							</button>
+
+							{demoMaterialsOpen ? (
+								<div className="landing-demo-box">
+									<p className="landing-demo-copy">
+										Test TermShift using the example degree
+										audit.
+									</p>
+									<p className="landing-demo-copy">
+										Use the seeded Northeastern B.S. in
+										Computer Science example audit
+										instantly, or download the sample PDFs
+										for the upload flow.
+									</p>
+									<p className="landing-demo-copy">
+										This demo instance is currently
+										configured for Northeastern
+										University&apos;s B.S. in Computer
+										Science planning model.
+									</p>
+									<div className="detail-actions">
+										<button
+											type="button"
+											className="plan-action-button plan-action-button--primary"
+											onClick={() =>
+												startInitialProcessing(
+													"sophomore",
+												)
+											}
+										>
+											Use example degree audit
+										</button>
+									</div>
+									<div className="landing-demo">
+										<p className="profile-label">
+											Download sample degree audits
+										</p>
+										<div className="landing-demo-links">
+											<a
+												href={
+													SAMPLE_AUDITS.sophomore.url
+												}
+												target="_blank"
+												rel="noreferrer"
+												className="plan-action-button"
+											>
+												{SAMPLE_AUDITS.sophomore.label}
+											</a>
+											<a
+												href={
+													SAMPLE_AUDITS.inProgress.url
+												}
+												target="_blank"
+												rel="noreferrer"
+												className="plan-action-button"
+											>
+												{SAMPLE_AUDITS.inProgress.label}
+											</a>
+										</div>
+									</div>
+								</div>
+							) : null}
+
+							{uploadState.message ? (
+								<p
+									className={`inline-note inline-note--${uploadState.status}`}
+								>
+									{uploadState.message}
+								</p>
+							) : null}
 						</div>
 					</div>
 				</section>
@@ -1514,7 +2069,7 @@ export function TermShiftApp() {
 		return (
 			<section className="pathwise-screen">
 				<header className="screen-header">
-					<h1 className="screen-title">Profile</h1>
+					{renderScreenTitle("Profile")}
 					{/* <p className="screen-intro">
 						This snapshot feeds both the planner and the co-op
 						search ranking. You can replace the upload at any time
@@ -1597,10 +2152,6 @@ export function TermShiftApp() {
 						</button>
 					</div>
 				) : null}
-
-				<p className={`inline-note inline-note--${uploadState.status}`}>
-					{uploadState.message || profile.parserNote}
-				</p>
 			</section>
 		);
 	}
@@ -1612,7 +2163,7 @@ export function TermShiftApp() {
 			<section className="pathwise-screen">
 				<header className="screen-header">
 					<div className="path-plan-topline">
-						<h1 className="screen-title">Path Plan</h1>
+						{renderScreenTitle("Degree Path")}
 
 						<div
 							className="mode-toggle"
@@ -1673,27 +2224,44 @@ export function TermShiftApp() {
 						)}
 
 						<div className="path-plan-header-summary">
-							<p className="summary-item">
-								<span className="summary-label">Credits</span>
-								<span className="summary-value">
-									{savedSnapshot.satisfiedCredits}/
-									{TOTAL_DEGREE_CREDITS} completed
+							<div className="summary-pill">
+								<span className="summary-pill-label">
+									Credits
 								</span>
-								<span className="summary-subvalue">
-									{savedSnapshot.inProgressCredits} in
-									progress
+								<span className="summary-pill-copy">
+									<strong className="summary-pill-value">
+										{savedSnapshot.satisfiedCredits}/
+										{TOTAL_DEGREE_CREDITS}
+									</strong>
+									<span className="summary-pill-meta">
+										complete
+									</span>
+									<span
+										className="summary-pill-dot"
+										aria-hidden="true"
+									>
+										·
+									</span>
+									<strong className="summary-pill-value">
+										{savedSnapshot.inProgressCredits}
+									</strong>
+									<span className="summary-pill-meta">
+										in progress
+									</span>
 								</span>
-							</p>
-							<p className="summary-item">
-								<span className="summary-label">
+							</div>
+							<div className="summary-pill">
+								<span className="summary-pill-label">
 									Projected Graduation
 								</span>
-								<span className="summary-value">
-									{experimentMode
-										? experimentSnapshot?.projectedGraduation
-										: savedSnapshot.projectedGraduation}
+								<span className="summary-pill-copy">
+									<strong className="summary-pill-value">
+										{experimentMode
+											? experimentSnapshot?.projectedGraduation
+											: savedSnapshot.projectedGraduation}
+									</strong>
 								</span>
-							</p>
+							</div>
 						</div>
 					</div>
 				</header>
@@ -2013,7 +2581,7 @@ export function TermShiftApp() {
 		return (
 			<section className="pathwise-screen">
 				<header className="screen-header">
-					<h1 className="screen-title">Co-op Search</h1>
+					{renderScreenTitle("Work Term Search")}
 					<p className="screen-intro">
 						TermShift ranks work terms using the courses already on
 						your transcript, then lets you test a listing directly
@@ -2189,63 +2757,96 @@ export function TermShiftApp() {
 		);
 	}
 
+	if (!profile) {
+		return (
+			<main className="landing-shell">
+				<div className="landing-content">
+					{processingState
+						? renderProcessingScreen()
+						: renderProfileScreen()}
+				</div>
+			</main>
+		);
+	}
+
 	return (
 		<main
 			className="pathwise-shell"
 			data-nav-collapsed={sidebarCollapsed ? "true" : "false"}
 		>
 			<aside className="pathwise-sidebar">
-				<button
-					type="button"
-					className="pathwise-sidebar-toggle"
-					aria-label={
-						sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"
-					}
-					onClick={() => setSidebarCollapsed((current) => !current)}
-				>
-					{sidebarCollapsed ? "→" : "←"}
-				</button>
+				<div className="pathwise-sidebar-content">
+					<div className="pathwise-sidebar-header">
+						<button
+							type="button"
+							className="pathwise-sidebar-toggle"
+							aria-label={
+								sidebarCollapsed
+									? "Expand sidebar"
+									: "Collapse sidebar"
+							}
+							onClick={() =>
+								setSidebarCollapsed((current) => !current)
+							}
+						>
+							{sidebarCollapsed ? "→" : "←"}
+						</button>
+					</div>
 
-				{sidebarCollapsed ? null : (
-					<nav className="pathwise-nav" aria-label="Primary">
+					{sidebarCollapsed ? null : (
+						<nav className="pathwise-nav" aria-label="Primary">
+							<button
+								type="button"
+								aria-current={
+									activeView === "profile"
+										? "page"
+										: undefined
+								}
+								className={`pathwise-nav-button ${
+									activeView === "profile" ? "is-active" : ""
+								}`}
+								onClick={() => navigateToView("profile")}
+							>
+								Profile
+							</button>
+							<button
+								type="button"
+								aria-current={
+									activeView === "plan" ? "page" : undefined
+								}
+								className={`pathwise-nav-button ${
+									activeView === "plan" ? "is-active" : ""
+								} ${profile ? "" : "is-disabled"}`}
+								onClick={() => navigateToView("plan")}
+							>
+								Plan
+							</button>
+							<button
+								type="button"
+								aria-current={
+									activeView === "search" ? "page" : undefined
+								}
+								className={`pathwise-nav-button ${
+									activeView === "search" ? "is-active" : ""
+								} ${profile ? "" : "is-disabled"}`}
+								onClick={() => navigateToView("search")}
+							>
+								Search
+							</button>
+						</nav>
+					)}
+
+					<div className="pathwise-sidebar-footer">
 						<button
 							type="button"
-							aria-current={
-								activeView === "profile" ? "page" : undefined
-							}
-							className={`pathwise-nav-button ${
-								activeView === "profile" ? "is-active" : ""
-							}`}
-							onClick={() => navigateToView("profile")}
+							className="pathwise-sidebar-logout"
+							aria-label="Log out and return to landing page"
+							onClick={resetToLanding}
 						>
-							Profile
+							{sidebarCollapsed ? "⤺" : "Log out"}
 						</button>
-						<button
-							type="button"
-							aria-current={
-								activeView === "plan" ? "page" : undefined
-							}
-							className={`pathwise-nav-button ${
-								activeView === "plan" ? "is-active" : ""
-							} ${profile ? "" : "is-disabled"}`}
-							onClick={() => navigateToView("plan")}
-						>
-							Plan
-						</button>
-						<button
-							type="button"
-							aria-current={
-								activeView === "search" ? "page" : undefined
-							}
-							className={`pathwise-nav-button ${
-								activeView === "search" ? "is-active" : ""
-							} ${profile ? "" : "is-disabled"}`}
-							onClick={() => navigateToView("search")}
-						>
-							Search
-						</button>
-					</nav>
-				)}
+					</div>
+				</div>
 			</aside>
 
 			<div className="pathwise-content">
