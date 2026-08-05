@@ -1,5 +1,5 @@
-import { PathwiseApp } from "@/components/pathwise-app";
+import { TermShiftApp } from "@/components/termshift-app";
 
 export default function Home() {
-  return <PathwiseApp />;
+  return <TermShiftApp />;
 }

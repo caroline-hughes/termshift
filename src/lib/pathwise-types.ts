@@ -48,6 +48,7 @@ export interface StudentProfile {
 
 export interface PlacedBlock {
   groupId: string;
+  label?: string;
   type: SpecialBlockType;
 }
 

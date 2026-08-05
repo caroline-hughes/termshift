@@ -532,7 +532,7 @@ export const DEMO_PROFILES: Record<string, Omit<StudentProfile, "uploadedAt" | "
       completedCourseIds: SOPHOMORE_COMPLETED,
       inProgressCourseIds: SPRING_2025_IN_PROGRESS,
       parserNote:
-        "Mapped to the seeded Northeastern BSCS sophomore profile. This is the default Pathwise planning state.",
+        "Mapped to the seeded Northeastern BSCS sophomore profile. This is the default TermShift planning state.",
     },
     inProgress: {
       id: "caroline-in-progress",
@@ -602,7 +602,7 @@ export function buildProfileFromUpload(fileName: string, text: string) {
   return withUploadMetadata(
     DEMO_PROFILES.sophomore,
     fileName,
-    "Processed the PDF, but the MVP could not map it precisely. Pathwise fell back to the seeded Northeastern sophomore profile.",
+    "Processed the PDF, but the MVP could not map it precisely. TermShift fell back to the seeded Northeastern sophomore profile.",
   );
 }
 

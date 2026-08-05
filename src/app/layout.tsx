@@ -9,9 +9,9 @@ const dmSans = DM_Sans({
 });
 
 export const metadata: Metadata = {
-  title: "Pathwise",
+  title: "TermShift",
   description:
-    "A stripped-down planning view for testing how co-op blocks change a Northeastern degree path.",
+    "A co-op planning MVP for testing how work terms change a student's degree path.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
