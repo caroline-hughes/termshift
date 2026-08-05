@@ -7,3 +7,10 @@ This version has breaking changes — APIs, conventions, and file structure may 
 This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
 
 <!-- END:nextjs-agent-rules -->
+
+# Pathwise Product Notes
+
+- User-facing UI should not include prototype labels like `Screen 1`, `Screen 2`, or internal engineering sections like `Modeled backend`.
+- The current MVP supports Northeastern University BSCS only, using the software concentration path as the seeded model.
+- Transcript processing is client-side with `pdfjs-dist` to avoid the earlier server-side PDF build issue.
+- Planner state and uploaded-profile state are persisted locally in browser storage.
