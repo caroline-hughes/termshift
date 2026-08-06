@@ -27,10 +27,6 @@ function makeTerm(year: number, kind: TermKind): AcademicTerm {
 }
 
 export const ACADEMIC_TERMS: AcademicTerm[] = [
-	makeTerm(2023, "fall"),
-	makeTerm(2024, "spring"),
-	makeTerm(2024, "summer1"),
-	makeTerm(2024, "summer2"),
 	makeTerm(2024, "fall"),
 	makeTerm(2025, "spring"),
 	makeTerm(2025, "summer1"),
@@ -45,6 +41,10 @@ export const ACADEMIC_TERMS: AcademicTerm[] = [
 	makeTerm(2027, "summer2"),
 	makeTerm(2027, "fall"),
 	makeTerm(2028, "spring"),
+	makeTerm(2028, "summer1"),
+	makeTerm(2028, "summer2"),
+	makeTerm(2028, "fall"),
+	makeTerm(2029, "spring"),
 ];
 
 function course(
@@ -83,7 +83,7 @@ export const COURSE_REQUIREMENTS: CourseRequirement[] = [
 		"career",
 		["fall"],
 		[],
-		"2023-fall",
+		"2024-fall",
 		1,
 	),
 	course(
@@ -95,7 +95,7 @@ export const COURSE_REQUIREMENTS: CourseRequirement[] = [
 		"foundation",
 		["fall", "spring"],
 		[],
-		"2023-fall",
+		"2024-fall",
 		2,
 	),
 	course(
@@ -107,7 +107,7 @@ export const COURSE_REQUIREMENTS: CourseRequirement[] = [
 		"foundation",
 		["fall", "spring"],
 		[],
-		"2023-fall",
+		"2024-fall",
 		3,
 	),
 	course(
@@ -119,7 +119,7 @@ export const COURSE_REQUIREMENTS: CourseRequirement[] = [
 		"career",
 		["fall", "spring"],
 		[],
-		"2023-fall",
+		"2024-fall",
 		4,
 	),
 	course(
@@ -131,7 +131,7 @@ export const COURSE_REQUIREMENTS: CourseRequirement[] = [
 		"foundation",
 		["fall", "spring"],
 		[],
-		"2023-fall",
+		"2024-fall",
 		5,
 	),
 	course(
@@ -143,7 +143,7 @@ export const COURSE_REQUIREMENTS: CourseRequirement[] = [
 		"foundation",
 		["spring"],
 		["cs2000"],
-		"2024-spring",
+		"2025-spring",
 		6,
 	),
 	course(
@@ -155,7 +155,7 @@ export const COURSE_REQUIREMENTS: CourseRequirement[] = [
 		"foundation",
 		["fall", "spring"],
 		[],
-		"2024-spring",
+		"2025-spring",
 		7,
 	),
 	course(
@@ -167,7 +167,7 @@ export const COURSE_REQUIREMENTS: CourseRequirement[] = [
 		"systems",
 		["fall", "spring"],
 		[],
-		"2024-spring",
+		"2025-spring",
 		8,
 	),
 	course(
@@ -179,7 +179,7 @@ export const COURSE_REQUIREMENTS: CourseRequirement[] = [
 		"open",
 		["fall", "spring"],
 		[],
-		"2024-spring",
+		"2025-spring",
 		9,
 	),
 	course(
@@ -191,7 +191,7 @@ export const COURSE_REQUIREMENTS: CourseRequirement[] = [
 		"systems",
 		["fall", "spring", "summer"],
 		["cs2100"],
-		"2024-summer1",
+		"2025-summer1",
 		10,
 	),
 	course(
@@ -203,7 +203,7 @@ export const COURSE_REQUIREMENTS: CourseRequirement[] = [
 		"open",
 		["summer", "fall", "spring"],
 		[],
-		"2024-summer1",
+		"2025-summer1",
 		11,
 	),
 	course(
@@ -215,7 +215,7 @@ export const COURSE_REQUIREMENTS: CourseRequirement[] = [
 		"open",
 		["summer", "fall", "spring"],
 		[],
-		"2024-summer2",
+		"2025-summer2",
 		12,
 	),
 	course(
@@ -227,7 +227,7 @@ export const COURSE_REQUIREMENTS: CourseRequirement[] = [
 		"open",
 		["summer", "fall", "spring"],
 		[],
-		"2024-summer2",
+		"2025-summer2",
 		13,
 	),
 	course(
@@ -239,7 +239,7 @@ export const COURSE_REQUIREMENTS: CourseRequirement[] = [
 		"foundation",
 		["fall", "spring"],
 		["cs2100"],
-		"2024-fall",
+		"2025-fall",
 		14,
 	),
 	course(
@@ -251,7 +251,7 @@ export const COURSE_REQUIREMENTS: CourseRequirement[] = [
 		"systems",
 		["fall", "spring"],
 		["cs2100"],
-		"2024-fall",
+		"2025-fall",
 		15,
 	),
 	course(
@@ -263,7 +263,7 @@ export const COURSE_REQUIREMENTS: CourseRequirement[] = [
 		"software",
 		["fall", "spring"],
 		["cs2100"],
-		"2024-fall",
+		"2025-fall",
 		16,
 	),
 	course(
@@ -275,7 +275,7 @@ export const COURSE_REQUIREMENTS: CourseRequirement[] = [
 		"systems",
 		["fall", "spring"],
 		[],
-		"2024-fall",
+		"2025-fall",
 		17,
 	),
 	course(
@@ -287,7 +287,7 @@ export const COURSE_REQUIREMENTS: CourseRequirement[] = [
 		"career",
 		["spring"],
 		[],
-		"2025-spring",
+		"2026-spring",
 		18,
 	),
 	course(
@@ -299,7 +299,7 @@ export const COURSE_REQUIREMENTS: CourseRequirement[] = [
 		"systems",
 		["fall", "spring"],
 		["cs3000", "cs3100"],
-		"2025-spring",
+		"2026-spring",
 		19,
 	),
 	course(
@@ -311,7 +311,7 @@ export const COURSE_REQUIREMENTS: CourseRequirement[] = [
 		"software",
 		["spring", "fall"],
 		["softwareA", "cs3100"],
-		"2025-spring",
+		"2026-spring",
 		20,
 	),
 	course(
@@ -323,7 +323,7 @@ export const COURSE_REQUIREMENTS: CourseRequirement[] = [
 		"open",
 		["fall", "spring"],
 		["cs3100"],
-		"2025-spring",
+		"2026-spring",
 		21,
 	),
 	course(
@@ -335,7 +335,7 @@ export const COURSE_REQUIREMENTS: CourseRequirement[] = [
 		"career",
 		["fall", "spring"],
 		[],
-		"2025-spring",
+		"2026-spring",
 		22,
 	),
 	course(
@@ -347,7 +347,7 @@ export const COURSE_REQUIREMENTS: CourseRequirement[] = [
 		"systems",
 		["summer", "fall"],
 		["cs2100"],
-		"2025-summer1",
+		"2026-summer1",
 		23,
 	),
 	course(
@@ -359,7 +359,7 @@ export const COURSE_REQUIREMENTS: CourseRequirement[] = [
 		"open",
 		["summer", "fall", "spring"],
 		[],
-		"2025-summer1",
+		"2026-summer1",
 		24,
 	),
 	course(
@@ -371,7 +371,7 @@ export const COURSE_REQUIREMENTS: CourseRequirement[] = [
 		"systems",
 		["fall", "spring"],
 		["cs3000", "cs3100"],
-		"2025-fall",
+		"2026-fall",
 		25,
 	),
 	course(
@@ -383,7 +383,7 @@ export const COURSE_REQUIREMENTS: CourseRequirement[] = [
 		"career",
 		["fall", "spring"],
 		[],
-		"2025-fall",
+		"2026-fall",
 		26,
 	),
 	course(
@@ -395,7 +395,7 @@ export const COURSE_REQUIREMENTS: CourseRequirement[] = [
 		"software",
 		["fall"],
 		["cs3650"],
-		"2025-fall",
+		"2026-fall",
 		27,
 	),
 	course(
@@ -407,7 +407,7 @@ export const COURSE_REQUIREMENTS: CourseRequirement[] = [
 		"software",
 		["fall", "spring"],
 		["cs3100"],
-		"2025-fall",
+		"2026-fall",
 		28,
 	),
 	course(
@@ -417,9 +417,9 @@ export const COURSE_REQUIREMENTS: CourseRequirement[] = [
 		"Writing requirement",
 		4,
 		"career",
-		["spring", "summer"],
+		["fall", "spring", "summer"],
 		["engw1111"],
-		"2026-spring",
+		"2026-summer2",
 		29,
 	),
 	course(
@@ -431,7 +431,7 @@ export const COURSE_REQUIREMENTS: CourseRequirement[] = [
 		"capstone",
 		["spring"],
 		["cs3650"],
-		"2026-spring",
+		"2027-spring",
 		30,
 	),
 	course(
@@ -443,7 +443,7 @@ export const COURSE_REQUIREMENTS: CourseRequirement[] = [
 		"open",
 		["fall", "spring"],
 		["cs3100"],
-		"2026-spring",
+		"2027-spring",
 		31,
 	),
 	course(
@@ -455,7 +455,7 @@ export const COURSE_REQUIREMENTS: CourseRequirement[] = [
 		"open",
 		["fall", "spring"],
 		[],
-		"2026-spring",
+		"2027-spring",
 		32,
 	),
 	course(
@@ -467,7 +467,7 @@ export const COURSE_REQUIREMENTS: CourseRequirement[] = [
 		"open",
 		["summer", "fall", "spring"],
 		[],
-		"2026-summer1",
+		"2026-summer2",
 		33,
 	),
 	course(
@@ -508,7 +508,7 @@ const SOPHOMORE_COMPLETED = [
 	"science2",
 ];
 
-const SPRING_2025_IN_PROGRESS = [
+const SPRING_2026_IN_PROGRESS = [
 	"cs1210",
 	"cs3650",
 	"softwareB",
@@ -516,7 +516,7 @@ const SPRING_2025_IN_PROGRESS = [
 	"presentation",
 ];
 
-const SUMMER_2025_IN_PROGRESS = ["eece2310", "genE"];
+const SUMMER_2026_IN_PROGRESS = ["eece2310", "genE"];
 
 export const DEMO_PROFILES: Record<
 	string,
@@ -527,12 +527,12 @@ export const DEMO_PROFILES: Record<
 		label: "Caroline Hughes · sophomore snapshot",
 		school: "Northeastern University",
 		program: "BSCS · Software concentration",
-		startYear: 2023,
+		startYear: 2024,
 		targetGraduation: "Spring 2027",
 		openToGraduation: "Spring 2028",
-		lockedThroughTermId: "2025-spring",
+		lockedThroughTermId: "2026-spring",
 		completedCourseIds: SOPHOMORE_COMPLETED,
-		inProgressCourseIds: SPRING_2025_IN_PROGRESS,
+		inProgressCourseIds: SPRING_2026_IN_PROGRESS,
 		parserNote:
 			"Mapped to the seeded Northeastern BSCS sophomore profile. This is the default TermShift planning state.",
 	},
@@ -541,17 +541,17 @@ export const DEMO_PROFILES: Record<
 		label: "Caroline Hughes · summer build-out",
 		school: "Northeastern University",
 		program: "BSCS · Software concentration",
-		startYear: 2023,
+		startYear: 2024,
 		targetGraduation: "Spring 2027",
 		openToGraduation: "Spring 2028",
-		lockedThroughTermId: "2025-summer1",
+		lockedThroughTermId: "2026-summer1",
 		completedCourseIds: [
 			...SOPHOMORE_COMPLETED,
-			...SPRING_2025_IN_PROGRESS,
+			...SPRING_2026_IN_PROGRESS,
 		],
-		inProgressCourseIds: SUMMER_2025_IN_PROGRESS,
+		inProgressCourseIds: SUMMER_2026_IN_PROGRESS,
 		parserNote:
-			"Mapped to the seeded Northeastern BSCS profile with Summer 1 2025 already underway.",
+			"Mapped to the seeded Northeastern BSCS profile with Summer 1 2026 already underway.",
 	},
 };
 
@@ -581,9 +581,23 @@ export function buildProfileFromUpload(fileName: string, text: string) {
 	const normalizedText = text.toLowerCase();
 
 	if (
+		normalizedName.includes("jane-doe-columbia-msai") ||
+		(normalizedText.includes("columbia university") &&
+			normalizedText.includes(
+				"master of science in artificial intelligence",
+			))
+	) {
+		return withUploadMetadata(
+			DEMO_PROFILES.sophomore,
+			fileName,
+			"Matched the upload to the sample Columbia M.S. in Artificial Intelligence degree audit.",
+		);
+	}
+
+	if (
 		normalizedName.includes("in-progress") ||
-		normalizedText.includes("january 13, 2025") ||
-		normalizedText.includes("summer 1 2025")
+		normalizedText.includes("january 13, 2026") ||
+		normalizedText.includes("summer 1 2026")
 	) {
 		return withUploadMetadata(
 			DEMO_PROFILES.inProgress,
@@ -594,8 +608,8 @@ export function buildProfileFromUpload(fileName: string, text: string) {
 
 	if (
 		normalizedName.includes("sophomore") ||
-		normalizedText.includes("may 22, 2025") ||
-		normalizedText.includes("spring 2025")
+		normalizedText.includes("may 22, 2026") ||
+		normalizedText.includes("spring 2026")
 	) {
 		return withUploadMetadata(
 			DEMO_PROFILES.sophomore,

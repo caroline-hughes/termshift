@@ -11,12 +11,14 @@ import {
 } from "react";
 import {
 	ACADEMIC_TERMS,
+	COURSE_MAP,
 	DEMO_PROFILES,
 	DEFAULT_PLANNER_STATE,
 	REQUIREMENTS_URL,
 	TOTAL_DEGREE_CREDITS,
 	buildProfileFromUpload,
 	getTermIndex,
+	getTermPattern,
 } from "@/lib/pathwise-data";
 import { derivePlannerSnapshot } from "@/lib/pathwise-planner";
 import {
@@ -25,12 +27,16 @@ import {
 } from "@/lib/termshift-plan-assessment";
 import {
 	buildOpportunitySuggestions,
+	scoreOpportunity,
 	type OpportunitySuggestion,
+	type WorkOpportunity,
 } from "@/lib/termshift-opportunities";
 import { TermShiftLogo } from "@/components/termshift-logo";
 import type {
+	CourseRequirement,
 	CourseBucket,
 	DerivedTerm,
+	PlannerSnapshot,
 	PlannerState,
 	ScheduledCourse,
 	SpecialBlockType,
@@ -43,6 +49,7 @@ type ResizeEdge = "start" | "end";
 type SchoolOption = "" | "Northeastern University" | "Columbia University";
 type MajorOption = "" | "BS CS" | "MS AI";
 type DemoProfileKey = "inProgress" | "sophomore";
+type SampleAuditKey = "columbiaMsai" | "northeasternBscs";
 
 type DragPayload =
 	| { type: "course"; courseId: string }
@@ -91,6 +98,7 @@ type UploadState = {
 
 type PersistedSession = {
 	activeScenarioId: string | null;
+	draftFingerprint?: string;
 	experimentMode: boolean;
 	identity: IdentityState;
 	plannerState: PlannerState;
@@ -128,13 +136,72 @@ type SaveScenarioModalState = {
 	value: string;
 };
 
+type ImportedJobFormState = {
+	message: string;
+	status: "error" | "idle" | "loading";
+	url: string;
+};
+
+type InsightActionOption = {
+	description?: string;
+	id: string;
+	label: string;
+	message: string;
+	plannerState: PlannerState;
+	selectedOpportunityId: string | null;
+};
+
+type InsightUiAction =
+	| {
+			kind: "fix";
+			label: string;
+			option: InsightActionOption;
+	  }
+	| {
+			emptyMessage?: string;
+			kind: "options";
+			label: string;
+			options: InsightActionOption[];
+	  };
+
+type UndoPlannerAction = {
+	activeScenarioId: string | null;
+	browseOpportunityId: string | null;
+	message: string;
+	plannerState: PlannerState;
+	selectedOpportunityId: string | null;
+};
+
+type ScenarioReturnState = {
+	activeScenarioId: string | null;
+	browseOpportunityId: string | null;
+	draftFingerprint: string;
+	experimentMode: boolean;
+	plannerState: PlannerState;
+	selectedOpportunityId: string | null;
+};
+
+type ParseJobResponse = {
+	opportunity: WorkOpportunity;
+};
+
 type RailSectionKey =
 	| "blocks"
 	| "insights"
-	| "recommendations"
 	| "savedScenarios";
 
-const APP_STORAGE_KEY = "termshift-session-v1";
+type SnapshotBlockGroup = {
+	endTermId: string;
+	startTermId: string;
+	termIds: string[];
+	type: SpecialBlockType;
+};
+
+const APP_STORAGE_KEY = "termshift-session-v2";
+const LEGACY_STORAGE_KEYS = [
+	"termshift-session-v1",
+	"pathwise-session-v1",
+];
 
 const TERM_ORDER: TermKind[] = ["fall", "spring", "summer1", "summer2"];
 const SCHOOL_OPTIONS: Exclude<SchoolOption, "">[] = [
@@ -157,31 +224,33 @@ const PROGRAM_LABELS: Record<Exclude<MajorOption, "">, string> = {
 	"MS AI": "M.S. in Artificial Intelligence",
 };
 const SAMPLE_AUDITS: Record<
-	DemoProfileKey,
+	SampleAuditKey,
 	{
+		defaultFullName: string;
 		documentName: string;
 		label: string;
 		major: Exclude<MajorOption, "">;
-		profileKey: DemoProfileKey;
 		school: Exclude<SchoolOption, "">;
+		seedProfileKey?: DemoProfileKey;
 		url: string;
 	}
 > = {
-	inProgress: {
-		documentName: "caroline-hughes-in-progress-unofficial-transcript.pdf",
-		label: "In-progress sample",
-		major: "BS CS",
-		profileKey: "inProgress",
-		school: "Northeastern University",
-		url: "/demo-transcripts/caroline-hughes-in-progress-unofficial-transcript.pdf",
+	columbiaMsai: {
+		defaultFullName: "Jane Doe",
+		documentName: "jane-doe-columbia-msai-degree-audit.pdf",
+		label: "Example degree audit",
+		major: "MS AI",
+		school: "Columbia University",
+		url: "/demo-transcripts/jane-doe-columbia-msai-degree-audit.pdf",
 	},
-	sophomore: {
-		documentName: "caroline-hughes-sophomore-unofficial-transcript.pdf",
+	northeasternBscs: {
+		defaultFullName: "Caroline Hughes",
+		documentName: "caroline-hughes-northeastern-unofficial-transcript.pdf",
 		label: "Example degree audit",
 		major: "BS CS",
-		profileKey: "sophomore",
 		school: "Northeastern University",
-		url: "/demo-transcripts/caroline-hughes-sophomore-unofficial-transcript.pdf",
+		seedProfileKey: "sophomore",
+		url: "/demo-transcripts/caroline-hughes-northeastern-unofficial-transcript.pdf",
 	},
 };
 
@@ -255,6 +324,10 @@ function serializePlannerState(state: PlannerState) {
 	});
 }
 
+const DEFAULT_PLANNER_FINGERPRINT = serializePlannerState(
+	DEFAULT_PLANNER_STATE,
+);
+
 function createBlockGroupId(type: SpecialBlockType, termId: string) {
 	return `${type}-${termId}-${Date.now()}-${Math.random()
 		.toString(36)
@@ -286,6 +359,19 @@ function buildScenarioTitleSuggestion(
 
 function getAcademicYearKey(term: DerivedTerm["term"]) {
 	return term.kind === "fall" ? term.year : term.year - 1;
+}
+
+function areTermsVisuallyAdjacent(leftTermId: string, rightTermId: string) {
+	const leftTerm = ACADEMIC_TERMS[getTermIndex(leftTermId)];
+	const rightTerm = ACADEMIC_TERMS[getTermIndex(rightTermId)];
+
+	if (!leftTerm || !rightTerm) return false;
+
+	return (
+		getAcademicYearKey(leftTerm) === getAcademicYearKey(rightTerm) &&
+		TERM_ORDER.indexOf(rightTerm.kind) ===
+			TERM_ORDER.indexOf(leftTerm.kind) + 1
+	);
 }
 
 function buildAcademicYearLabel(startYear: number) {
@@ -350,37 +436,61 @@ function getTermIdsFromStartIndex(startIndex: number, length: number) {
 	);
 }
 
-function getDefaultWorkTermSpan(termId: string) {
+function buildFullTermPair(termIds: Array<string | null>) {
+	const resolved = termIds.filter(Boolean) as string[];
+	return resolved.length === 2 ? resolved : [];
+}
+
+function getDefaultWorkTermSpan(
+	termId: string,
+	isTermAvailable?: (termId: string) => boolean,
+) {
 	const term = ACADEMIC_TERMS[getTermIndex(termId)];
 	if (!term) return [];
 
+	const candidateSpans: string[][] = [];
+
 	if (term.kind === "spring") {
-		return [termId, getTermIdAtOffset(termId, 1)].filter(
-			Boolean,
-		) as string[];
+		candidateSpans.push(buildFullTermPair([termId, getTermIdAtOffset(termId, 1)]));
+	} else if (term.kind === "summer1") {
+		// Prefer the standard Spring + Summer 1 co-op window, but if Spring is
+		// already locked or unavailable, still allow Summer 1 + Summer 2.
+		candidateSpans.push(buildFullTermPair([getTermIdAtOffset(termId, -1), termId]));
+		candidateSpans.push(buildFullTermPair([termId, getTermIdAtOffset(termId, 1)]));
+	} else if (term.kind === "summer2") {
+		candidateSpans.push(buildFullTermPair([termId, getTermIdAtOffset(termId, 1)]));
+	} else {
+		candidateSpans.push(buildFullTermPair([getTermIdAtOffset(termId, -1), termId]));
 	}
 
-	if (term.kind === "summer1") {
-		return [getTermIdAtOffset(termId, -1), termId].filter(
-			Boolean,
-		) as string[];
+	if (!isTermAvailable) {
+		return candidateSpans.find((span) => span.length === 2) ?? [];
 	}
 
-	if (term.kind === "summer2") {
-		return [termId, getTermIdAtOffset(termId, 1)].filter(
-			Boolean,
-		) as string[];
-	}
-
-	return [getTermIdAtOffset(termId, -1), termId].filter(Boolean) as string[];
+	return (
+		candidateSpans.find(
+			(span) => span.length === 2 && span.every((candidate) => isTermAvailable(candidate)),
+		) ?? []
+	);
 }
 
-function getDefaultBlockSpan(termId: string, blockType: SpecialBlockType) {
+function getDefaultBlockSpan(
+	termId: string,
+	blockType: SpecialBlockType,
+	isTermAvailable?: (termId: string) => boolean,
+) {
 	if (blockType === "work-term") {
-		return getDefaultWorkTermSpan(termId);
+		return getDefaultWorkTermSpan(termId, isTermAvailable);
 	}
 
 	return [termId];
+}
+
+function getProjectedGraduationTermId(snapshot: PlannerSnapshot) {
+	return (
+		[...snapshot.terms].reverse().find((term) => term.courses.length > 0)
+			?.term.id ?? null
+	);
 }
 
 function clearPinnedFromTerms(
@@ -495,6 +605,43 @@ function buildBlockLabels(blockGroups: Map<string, BlockGroup>) {
 	return labels;
 }
 
+function buildSnapshotBlockGroups(snapshot: PlannerSnapshot) {
+	const groups: SnapshotBlockGroup[] = [];
+	let currentGroup: SnapshotBlockGroup | null = null;
+
+	for (const term of snapshot.terms) {
+		if (!term.specialBlock) {
+			currentGroup = null;
+			continue;
+		}
+
+		const currentIndex = getTermIndex(term.term.id);
+		const previousIndex = currentGroup
+			? getTermIndex(currentGroup.endTermId)
+			: -1;
+
+		if (
+			currentGroup &&
+			currentGroup.type === term.specialBlock &&
+			currentIndex === previousIndex + 1
+		) {
+			currentGroup.endTermId = term.term.id;
+			currentGroup.termIds.push(term.term.id);
+			continue;
+		}
+
+		currentGroup = {
+			endTermId: term.term.id,
+			startTermId: term.term.id,
+			termIds: [term.term.id],
+			type: term.specialBlock,
+		};
+		groups.push(currentGroup);
+	}
+
+	return groups;
+}
+
 function buildTermIssueMap(insights: PlanInsight[]) {
 	const issuesByTerm = new Map<string, PlanInsight[]>();
 
@@ -538,6 +685,21 @@ function findSampleAuditByDocumentName(fileName: string) {
 	);
 }
 
+function getSampleAuditKeyForSelection(
+	school: SchoolOption,
+	major: MajorOption,
+): SampleAuditKey | null {
+	if (school === "Northeastern University" && major === "BS CS") {
+		return "northeasternBscs";
+	}
+
+	if (school === "Columbia University" && major === "MS AI") {
+		return "columbiaMsai";
+	}
+
+	return null;
+}
+
 function applyIdentityToProfile(
 	baseProfile: StudentProfile,
 	identity: IdentityState,
@@ -565,6 +727,24 @@ function delay(ms: number) {
 	return new Promise((resolve) => {
 		window.setTimeout(resolve, ms);
 	});
+}
+
+function ArrowRightIcon({ className = "" }: { className?: string }) {
+	return (
+		<svg
+			aria-hidden="true"
+			className={className}
+			viewBox="0 0 24 24"
+			fill="none"
+			stroke="currentColor"
+			strokeWidth="1.8"
+			strokeLinecap="round"
+			strokeLinejoin="round"
+		>
+			<path d="M5 12h12" />
+			<path d="m13 6 6 6-6 6" />
+		</svg>
+	);
 }
 
 function readFileAsDataUrl(file: File) {
@@ -662,6 +842,14 @@ export function TermShiftApp() {
 	const [activeScenarioId, setActiveScenarioId] = useState<string | null>(
 		null,
 	);
+	const [scenarioReturnState, setScenarioReturnState] =
+		useState<ScenarioReturnState | null>(null);
+	const [expandedInsightId, setExpandedInsightId] = useState<string | null>(
+		null,
+	);
+	const [draftFingerprint, setDraftFingerprint] = useState(
+		DEFAULT_PLANNER_FINGERPRINT,
+	);
 	const [browseOpportunityId, setBrowseOpportunityId] = useState<
 		string | null
 	>(null);
@@ -674,18 +862,27 @@ export function TermShiftApp() {
 	const [demoMaterialsOpen, setDemoMaterialsOpen] = useState(false);
 	const [processingState, setProcessingState] =
 		useState<ProcessingState | null>(null);
+	const [processingIsExiting, setProcessingIsExiting] = useState(false);
+	const [lockedTermPopup, setLockedTermPopup] = useState<string | null>(null);
 	const [saveScenarioModal, setSaveScenarioModal] =
 		useState<SaveScenarioModalState>({
 			defaultTitle: "",
 			isOpen: false,
 			value: "",
 		});
+	const [importedJobForm, setImportedJobForm] =
+		useState<ImportedJobFormState>({
+			message: "",
+			status: "idle",
+			url: "",
+		});
+	const [importedOpportunityPreview, setImportedOpportunityPreview] =
+		useState<OpportunityPreview | null>(null);
 	const [collapsedRailSections, setCollapsedRailSections] = useState<
 		Record<RailSectionKey, boolean>
 	>({
 		blocks: false,
 		insights: false,
-		recommendations: false,
 		savedScenarios: true,
 	});
 	const [uploadedDocumentUrl, setUploadedDocumentUrl] = useState<
@@ -694,6 +891,10 @@ export function TermShiftApp() {
 	const [highlightedProfileSection, setHighlightedProfileSection] = useState<
 		"upload" | null
 	>(null);
+	const [undoPlannerAction, setUndoPlannerAction] =
+		useState<UndoPlannerAction | null>(null);
+	const [undoPlannerActionIsClosing, setUndoPlannerActionIsClosing] =
+		useState(false);
 	const [pendingUpload, setPendingUpload] = useState<File | null>(null);
 	const [didHydrate, setDidHydrate] = useState(false);
 	const insightItemRefs = useRef<Map<string, HTMLLIElement | null>>(
@@ -701,6 +902,8 @@ export function TermShiftApp() {
 	);
 	const uploadedDocumentUrlRef = useRef<string | null>(null);
 	const profileHighlightTimeoutRef = useRef<number | null>(null);
+	const processingExitTimeoutRef = useRef<number | null>(null);
+	const lockedTermPopupTimeoutRef = useRef<number | null>(null);
 	const processingRunRef = useRef(0);
 
 	useEffect(() => {
@@ -708,6 +911,12 @@ export function TermShiftApp() {
 
 		window.setTimeout(() => {
 			if (cancelled) return;
+
+			for (const legacyKey of LEGACY_STORAGE_KEYS) {
+				if (legacyKey !== APP_STORAGE_KEY) {
+					window.localStorage.removeItem(legacyKey);
+				}
+			}
 
 			const raw = window.localStorage.getItem(APP_STORAGE_KEY);
 			if (!raw) {
@@ -717,6 +926,34 @@ export function TermShiftApp() {
 
 			try {
 				const parsed = JSON.parse(raw) as PersistedSession;
+				const hydratedScenarios = (parsed.savedScenarios ?? []).map(
+					(scenario) => ({
+						...scenario,
+						issueCount:
+							scenario.issueCount ??
+							(
+								scenario as SavedScenario & {
+									signalCount?: number;
+								}
+							).signalCount ??
+							0,
+						plannerState: clonePlannerState(scenario.plannerState),
+						topIssues:
+							scenario.topIssues ??
+							(
+								scenario as SavedScenario & {
+									topSignals?: string[];
+								}
+							).topSignals ??
+						[],
+					}),
+				);
+				const hydratedActiveScenario = parsed.activeScenarioId
+					? hydratedScenarios.find(
+							(scenario) =>
+								scenario.id === parsed.activeScenarioId,
+					  ) ?? null
+					: null;
 
 				if (parsed.identity) {
 					setIdentity({
@@ -754,31 +991,20 @@ export function TermShiftApp() {
 					);
 				}
 
-				setSavedScenarios(
-					(parsed.savedScenarios ?? []).map((scenario) => ({
-						...scenario,
-						issueCount:
-							scenario.issueCount ??
-							(
-								scenario as SavedScenario & {
-									signalCount?: number;
-								}
-							).signalCount ??
-							0,
-						plannerState: clonePlannerState(scenario.plannerState),
-						topIssues:
-							scenario.topIssues ??
-							(
-								scenario as SavedScenario & {
-									topSignals?: string[];
-								}
-							).topSignals ??
-							[],
-					})),
-				);
+				setSavedScenarios(hydratedScenarios);
 				setActiveScenarioId(parsed.activeScenarioId ?? null);
 				setSelectedOpportunityId(parsed.selectedOpportunityId ?? null);
 				setExperimentMode(parsed.experimentMode ?? false);
+				setDraftFingerprint(
+					parsed.draftFingerprint ??
+						(hydratedActiveScenario
+							? serializePlannerState(
+									hydratedActiveScenario.plannerState,
+							  )
+							: parsed.savedPlannerState
+								? serializePlannerState(parsed.savedPlannerState)
+								: DEFAULT_PLANNER_FINGERPRINT),
+				);
 			} catch {
 				window.localStorage.removeItem(APP_STORAGE_KEY);
 			} finally {
@@ -796,6 +1022,7 @@ export function TermShiftApp() {
 
 		const session: PersistedSession = {
 			activeScenarioId,
+			draftFingerprint,
 			experimentMode,
 			identity,
 			plannerState,
@@ -810,6 +1037,7 @@ export function TermShiftApp() {
 	}, [
 		didHydrate,
 		activeScenarioId,
+		draftFingerprint,
 		experimentMode,
 		identity,
 		plannerState,
@@ -843,11 +1071,41 @@ export function TermShiftApp() {
 	}, []);
 
 	useEffect(() => {
+		if (!undoPlannerAction) {
+			setUndoPlannerActionIsClosing(false);
+			return;
+		}
+
+		setUndoPlannerActionIsClosing(false);
+
+		const fadeTimer = window.setTimeout(() => {
+			setUndoPlannerActionIsClosing(true);
+		}, 1400);
+		const clearTimer = window.setTimeout(() => {
+			setUndoPlannerAction(null);
+			setUndoPlannerActionIsClosing(false);
+		}, 1900);
+
+		return () => {
+			window.clearTimeout(fadeTimer);
+			window.clearTimeout(clearTimer);
+		};
+	}, [undoPlannerAction]);
+
+	useEffect(() => {
 		return () => {
 			processingRunRef.current += 1;
 
 			if (profileHighlightTimeoutRef.current) {
 				window.clearTimeout(profileHighlightTimeoutRef.current);
+			}
+
+			if (processingExitTimeoutRef.current) {
+				window.clearTimeout(processingExitTimeoutRef.current);
+			}
+
+			if (lockedTermPopupTimeoutRef.current) {
+				window.clearTimeout(lockedTermPopupTimeoutRef.current);
 			}
 
 			if (
@@ -865,74 +1123,49 @@ export function TermShiftApp() {
 	const savedSnapshot = profile
 		? derivePlannerSnapshot(profile, savedPlannerState)
 		: null;
-	const snapshot = experimentMode ? experimentSnapshot : savedSnapshot;
-	const displayedPlannerState = experimentMode
+	const activeSavedScenario =
+		savedScenarios.find((scenario) => scenario.id === activeScenarioId) ??
+		null;
+	const isViewingSavedScenario = Boolean(activeSavedScenario);
+	const snapshot = isViewingSavedScenario
+		? experimentSnapshot
+		: experimentMode
+			? experimentSnapshot
+			: savedSnapshot;
+	const displayedPlannerState = isViewingSavedScenario
 		? plannerState
-		: savedPlannerState;
+		: experimentMode
+			? plannerState
+			: savedPlannerState;
 	const yearRows = profile && snapshot ? buildYearRows(snapshot.terms) : [];
 	const lockedThroughIndex = profile
 		? getTermIndex(profile.lockedThroughTermId)
 		: -1;
 	const blockGroups = buildBlockGroups(displayedPlannerState.placedBlocks);
 	const blockLabels = buildBlockLabels(blockGroups.byGroupId);
-	const opportunityPreviews: OpportunityPreview[] =
-		profile && savedSnapshot
-			? buildOpportunitySuggestions(profile).map((opportunity) => {
-					const scenarioTerms = getTermIdsBetween(
-						opportunity.termStartId,
-						opportunity.termEndId,
-					);
-					const scenarioState = buildScenarioState(
-						clonePlannerState(savedPlannerState),
-						scenarioTerms,
-						"work-term",
-						`Co-op: ${opportunity.company}`,
-					);
-					const scenarioSnapshot = derivePlannerSnapshot(
-						profile,
-						scenarioState,
-					);
-					const scenarioAssessment = buildPlanAssessment({
-						baselineSnapshot: savedSnapshot,
-						experimentMode: true,
-						profile,
-						selectedOpportunity: opportunity,
-						snapshot: scenarioSnapshot,
-					});
-
-					return {
-						...opportunity,
-						issueCount: scenarioAssessment.issueCount,
-						projectedGraduation:
-							scenarioSnapshot.projectedGraduation,
-						topIssues: scenarioAssessment.topIssueTexts,
-					};
-			  })
-			: [];
+	const opportunityPreviews: OpportunityPreview[] = profile
+		? buildOpportunitySuggestions(profile).flatMap((opportunity) => {
+				const preview = buildOpportunityPreviewForSearch(opportunity);
+				return preview ? [preview] : [];
+		  })
+		: [];
+	const combinedOpportunityPreviews = importedOpportunityPreview
+		? [importedOpportunityPreview, ...opportunityPreviews]
+		: opportunityPreviews;
 
 	const selectedOpportunity =
-		opportunityPreviews.find(
+		combinedOpportunityPreviews.find(
 			(opportunity) => opportunity.id === selectedOpportunityId,
 		) ?? null;
-	const activeSavedScenario =
-		savedScenarios.find((scenario) => scenario.id === activeScenarioId) ??
-		null;
 	const activeSearchOpportunity =
-		opportunityPreviews.find(
+		combinedOpportunityPreviews.find(
 			(opportunity) => opportunity.id === browseOpportunityId,
 		) ??
-		opportunityPreviews[0] ??
+		combinedOpportunityPreviews[0] ??
 		null;
 
-	const baselineFingerprint = serializePlannerState(savedPlannerState);
-	const activeScenarioFingerprint = activeSavedScenario
-		? serializePlannerState(activeSavedScenario.plannerState)
-		: null;
 	const currentFingerprint = serializePlannerState(plannerState);
-	const hasExperimentChanges = currentFingerprint !== baselineFingerprint;
-	const isDirty = activeScenarioFingerprint
-		? currentFingerprint !== activeScenarioFingerprint
-		: hasExperimentChanges;
+	const isDirty = currentFingerprint !== draftFingerprint;
 	const requirementsLinkLabel = "Degree requirements";
 	const availableMajorOptions = identity.school
 		? MAJOR_OPTIONS_BY_SCHOOL[identity.school]
@@ -941,24 +1174,760 @@ export function TermShiftApp() {
 		identity.fullName.trim().length > 0 &&
 		Boolean(identity.school) &&
 		Boolean(identity.major);
+	const selectedSampleAuditKey = getSampleAuditKeyForSelection(
+		identity.school,
+		identity.major,
+	);
+	const selectedSampleAudit = selectedSampleAuditKey
+		? SAMPLE_AUDITS[selectedSampleAuditKey]
+		: null;
 	const planAssessment =
 		profile && snapshot && savedSnapshot
 			? buildPlanAssessment({
 					baselineSnapshot: savedSnapshot,
-					experimentMode,
+					experimentMode: experimentMode || isViewingSavedScenario,
 					profile,
-					selectedOpportunity: experimentMode
+					selectedOpportunity:
+						experimentMode || isViewingSavedScenario
 						? selectedOpportunity
-						: null,
+							: null,
 					snapshot,
 			  })
 			: null;
 	const termIssueMap = planAssessment
 		? buildTermIssueMap(planAssessment.insights)
 		: new Map<string, PlanInsight[]>();
+	const workingPlannerState =
+		experimentMode || isViewingSavedScenario
+			? plannerState
+			: savedPlannerState;
+	const workingSelectedOpportunityId =
+		experimentMode || isViewingSavedScenario
+			? selectedOpportunityId
+			: null;
 
 	function isFutureTerm(termId: string) {
 		return profile ? getTermIndex(termId) > lockedThroughIndex : false;
+	}
+
+	function getSnapshotTerm(
+		sourceSnapshot: PlannerSnapshot,
+		termId: string,
+	) {
+		return (
+			sourceSnapshot.terms.find((term) => term.term.id === termId) ?? null
+		);
+	}
+
+	function getPrerequisiteIssueCount(sourceInsights: PlanInsight[]) {
+		return sourceInsights.filter((insight) => insight.id.startsWith("prereq-"))
+			.length;
+	}
+
+	function getPlannedCoursePlacements(sourceSnapshot: PlannerSnapshot) {
+		return sourceSnapshot.terms.flatMap((term) =>
+			term.courses
+				.filter((course) => course.status === "planned")
+				.map((course) => ({
+					course,
+					termId: term.term.id,
+				})),
+		);
+	}
+
+	function buildPinnedCourseState(
+		baseState: PlannerState,
+		courseId: string,
+		termId: string,
+	) {
+		return {
+			placedBlocks: { ...baseState.placedBlocks },
+			pinnedCourses: {
+				...baseState.pinnedCourses,
+				[courseId]: termId,
+			},
+		};
+	}
+
+	function simulatePlannerState(
+		nextPlannerState: PlannerState,
+		nextSelectedOpportunityId: string | null = workingSelectedOpportunityId,
+	) {
+		if (!profile || !savedSnapshot) return null;
+
+		const normalizedState = clonePlannerState(nextPlannerState);
+		const nextSnapshot = derivePlannerSnapshot(profile, normalizedState);
+		const nextSelectedOpportunity =
+			combinedOpportunityPreviews.find(
+				(opportunity) => opportunity.id === nextSelectedOpportunityId,
+			) ?? null;
+		const nextAssessment = buildPlanAssessment({
+			baselineSnapshot: savedSnapshot,
+			experimentMode: true,
+			profile,
+			selectedOpportunity: nextSelectedOpportunity,
+			snapshot: nextSnapshot,
+		});
+
+		return {
+			assessment: nextAssessment,
+			plannerState: normalizedState,
+			selectedOpportunityId: nextSelectedOpportunityId,
+			snapshot: nextSnapshot,
+		};
+	}
+
+	function applyInsightOption(option: InsightActionOption) {
+		setUndoPlannerAction({
+			activeScenarioId,
+			browseOpportunityId,
+			message: option.message,
+			plannerState: clonePlannerState(workingPlannerState),
+			selectedOpportunityId: workingSelectedOpportunityId,
+		});
+		setUndoPlannerActionIsClosing(false);
+		setBlockContextMenu(null);
+		setExpandedInsightId(null);
+		setExperimentMode(true);
+		setPlannerState(clonePlannerState(option.plannerState));
+		setSelectedOpportunityId(option.selectedOpportunityId);
+		setActiveScenarioId(null);
+		setScenarioReturnState(null);
+	}
+
+	function undoLastInsightAction() {
+		if (!undoPlannerAction) return;
+
+		setPlannerState(clonePlannerState(undoPlannerAction.plannerState));
+		setSelectedOpportunityId(undoPlannerAction.selectedOpportunityId);
+		setBrowseOpportunityId(undoPlannerAction.browseOpportunityId);
+		setActiveScenarioId(undoPlannerAction.activeScenarioId);
+		setExperimentMode(true);
+		setUndoPlannerActionIsClosing(false);
+		setUndoPlannerAction(null);
+	}
+
+	function buildInsightActionOption(
+		id: string,
+		label: string,
+		message: string,
+		nextPlannerState: PlannerState,
+		description?: string,
+		nextSelectedOpportunityId: string | null = workingSelectedOpportunityId,
+	): InsightActionOption {
+		return {
+			description,
+			id,
+			label,
+			message,
+			plannerState: clonePlannerState(nextPlannerState),
+			selectedOpportunityId: nextSelectedOpportunityId,
+		};
+	}
+
+	function buildTimelineTargetTermIds(sourceSnapshot: PlannerSnapshot) {
+		const experientialGroup = buildSnapshotBlockGroups(sourceSnapshot).find(
+			(group) =>
+				group.type === "work-term" || group.type === "internship",
+		);
+		if (!experientialGroup) return [];
+
+		const endTerm = ACADEMIC_TERMS[getTermIndex(experientialGroup.endTermId)];
+		if (!endTerm) return [];
+
+		const candidateTermIds =
+			endTerm.kind === "fall"
+				? [`${endTerm.year + 1}-summer1`, `${endTerm.year + 1}-summer2`]
+				: endTerm.kind === "spring"
+					? [`${endTerm.year}-summer1`, `${endTerm.year}-summer2`]
+					: endTerm.kind === "summer1"
+						? [`${endTerm.year}-summer2`]
+						: [
+								`${endTerm.year + 1}-spring`,
+								`${endTerm.year + 1}-summer1`,
+						  ];
+
+		return candidateTermIds.filter(
+			(termId) =>
+				ACADEMIC_TERMS.some((term) => term.id === termId) &&
+				isFutureTerm(termId),
+		);
+	}
+
+	function buildTimelineOption(
+		targetTermId: string,
+		sourceSnapshot: PlannerSnapshot,
+		sourceAssessment: typeof planAssessment,
+	) {
+		if (!sourceAssessment) return null;
+
+		const targetTerm = getSnapshotTerm(sourceSnapshot, targetTermId);
+		const targetAcademicTerm =
+			ACADEMIC_TERMS[getTermIndex(targetTermId)] ?? null;
+		const currentGraduationTermId =
+			getProjectedGraduationTermId(sourceSnapshot);
+		const currentGraduationIndex = currentGraduationTermId
+			? getTermIndex(currentGraduationTermId)
+			: -1;
+		const currentPrereqIssueCount = getPrerequisiteIssueCount(
+			sourceAssessment.insights,
+		);
+
+		if (!targetTerm || !targetAcademicTerm || currentGraduationIndex === -1) {
+			return null;
+		}
+
+		let bestCandidate:
+			| {
+					course: CourseRequirement;
+					currentTermId: string;
+					issueCount: number;
+					nextGraduationIndex: number;
+					option: InsightActionOption;
+			  }
+			| null = null;
+
+		for (const { course, termId: currentTermId } of getPlannedCoursePlacements(
+			sourceSnapshot,
+		)) {
+			if (course.id === "engw3302") continue;
+			if (getTermIndex(currentTermId) <= getTermIndex(targetTermId)) continue;
+			if (
+				!course.allowedTerms.includes(
+					getTermPattern(targetAcademicTerm.kind),
+				)
+			) {
+				continue;
+			}
+
+			const simulation = simulatePlannerState(
+				buildPinnedCourseState(
+					workingPlannerState,
+					course.id,
+					targetTermId,
+				),
+			);
+			if (!simulation) continue;
+
+			const nextTargetTerm = getSnapshotTerm(
+				simulation.snapshot,
+				targetTermId,
+			);
+			const nextGraduationTermId = getProjectedGraduationTermId(
+				simulation.snapshot,
+			);
+			const nextGraduationIndex = nextGraduationTermId
+				? getTermIndex(nextGraduationTermId)
+				: -1;
+
+			if (
+				!nextTargetTerm?.courses.some(
+					(scheduledCourse) => scheduledCourse.id === course.id,
+				) ||
+				nextGraduationIndex === -1 ||
+				nextGraduationIndex >= currentGraduationIndex ||
+				nextTargetTerm.overload ||
+				getPrerequisiteIssueCount(simulation.assessment.insights) >
+					currentPrereqIssueCount
+			) {
+				continue;
+			}
+
+			const option = buildInsightActionOption(
+				`timeline-${course.id}-${targetTermId}`,
+				`Move ${course.code} to ${targetAcademicTerm.label}`,
+				`Moved ${course.code} to ${targetAcademicTerm.label} to recover time.`,
+				simulation.plannerState,
+				`Reclaim time by pulling one planned course into ${targetAcademicTerm.label}.`,
+				simulation.selectedOpportunityId,
+			);
+
+			if (
+				!bestCandidate ||
+				nextGraduationIndex < bestCandidate.nextGraduationIndex ||
+				(nextGraduationIndex === bestCandidate.nextGraduationIndex &&
+					simulation.assessment.issueCount < bestCandidate.issueCount) ||
+				(nextGraduationIndex === bestCandidate.nextGraduationIndex &&
+					simulation.assessment.issueCount ===
+						bestCandidate.issueCount &&
+					getTermIndex(currentTermId) >
+						getTermIndex(bestCandidate.currentTermId))
+			) {
+				bestCandidate = {
+					course,
+					currentTermId,
+					issueCount: simulation.assessment.issueCount,
+					nextGraduationIndex,
+					option,
+				};
+			}
+		}
+
+		return bestCandidate?.option ?? null;
+	}
+
+	function buildWritingInsightAction(sourceSnapshot: PlannerSnapshot) {
+		const engwPlacement = getPlannedCoursePlacements(sourceSnapshot).find(
+			({ course }) => course.id === "engw3302",
+		);
+		if (!engwPlacement) return null;
+
+		const experientialGroups = buildSnapshotBlockGroups(sourceSnapshot).filter(
+			(group) =>
+				group.type === "work-term" || group.type === "internship",
+		);
+		const preferredTermIds = experientialGroups
+			.sort((left, right) => {
+				if (left.type === right.type) {
+					return (
+						getTermIndex(left.startTermId) -
+						getTermIndex(right.startTermId)
+					);
+				}
+
+				return left.type === "work-term" ? -1 : 1;
+			})
+			.flatMap((group) => group.termIds)
+			.filter((termId) => isFutureTerm(termId));
+
+		for (const termId of preferredTermIds) {
+			const academicTerm = ACADEMIC_TERMS[getTermIndex(termId)];
+			if (
+				!academicTerm ||
+				!COURSE_MAP.engw3302.allowedTerms.includes(
+					getTermPattern(academicTerm.kind),
+				)
+			) {
+				continue;
+			}
+
+			const simulation = simulatePlannerState(
+				buildPinnedCourseState(
+					workingPlannerState,
+					"engw3302",
+					termId,
+				),
+			);
+			if (!simulation) continue;
+
+			const targetTerm = getSnapshotTerm(simulation.snapshot, termId);
+			const movedCourse = targetTerm?.courses.find(
+				(course) => course.id === "engw3302",
+			);
+
+			if (
+				!targetTerm?.specialBlock ||
+				!movedCourse ||
+				movedCourse.conflicts.some((conflict) =>
+					conflict.startsWith("Prerequisite timing issue: "),
+				)
+			) {
+				continue;
+			}
+
+			return {
+				kind: "fix" as const,
+				label: "Fix",
+				option: buildInsightActionOption(
+					`writing-${termId}`,
+					`Move ENGW 3302 to ${academicTerm.label}`,
+					`Moved ENGW 3302 into ${academicTerm.label}.`,
+					simulation.plannerState,
+					"Place Advanced Technical Writing inside the experiential term.",
+					simulation.selectedOpportunityId,
+				),
+			};
+		}
+
+		return null;
+	}
+
+	function buildPrereqInsightAction(
+		insight: PlanInsight,
+		sourceSnapshot: PlannerSnapshot,
+		sourceAssessment: typeof planAssessment,
+	) {
+		if (!insight.linkedTermId || !sourceAssessment) return null;
+
+		const sourceTerm = getSnapshotTerm(sourceSnapshot, insight.linkedTermId);
+		if (!sourceTerm) return null;
+
+		const currentPrereqIssueCount = getPrerequisiteIssueCount(
+			sourceAssessment.insights,
+		);
+		const currentGraduationTermId =
+			getProjectedGraduationTermId(sourceSnapshot);
+		const currentGraduationIndex = currentGraduationTermId
+			? getTermIndex(currentGraduationTermId)
+			: -1;
+
+		let bestOption:
+			| {
+					issueCount: number;
+					nextGraduationIndex: number;
+					targetTermIndex: number;
+					option: InsightActionOption;
+			  }
+			| null = null;
+
+		for (const course of sourceTerm.courses.filter((scheduledCourse) =>
+			scheduledCourse.conflicts.some((conflict) =>
+				conflict.startsWith("Prerequisite timing issue: "),
+			),
+		)) {
+			for (const targetTerm of ACADEMIC_TERMS) {
+				const targetTermIndex = getTermIndex(targetTerm.id);
+				if (
+					targetTermIndex <= getTermIndex(sourceTerm.term.id) ||
+					!isFutureTerm(targetTerm.id) ||
+					!course.allowedTerms.includes(getTermPattern(targetTerm.kind))
+				) {
+					continue;
+				}
+
+				const simulation = simulatePlannerState(
+					buildPinnedCourseState(
+						workingPlannerState,
+						course.id,
+						targetTerm.id,
+					),
+				);
+				if (!simulation) continue;
+
+				const movedCourse = getSnapshotTerm(
+					simulation.snapshot,
+					targetTerm.id,
+				)?.courses.find((scheduledCourse) => scheduledCourse.id === course.id);
+				const nextPrereqIssueCount = getPrerequisiteIssueCount(
+					simulation.assessment.insights,
+				);
+				const nextGraduationTermId = getProjectedGraduationTermId(
+					simulation.snapshot,
+				);
+				const nextGraduationIndex = nextGraduationTermId
+					? getTermIndex(nextGraduationTermId)
+					: currentGraduationIndex;
+
+				if (
+					!movedCourse ||
+					movedCourse.conflicts.some((conflict) =>
+						conflict.startsWith("Prerequisite timing issue: "),
+					) ||
+					nextPrereqIssueCount >= currentPrereqIssueCount
+				) {
+					continue;
+				}
+
+				const option = buildInsightActionOption(
+					`prereq-${course.id}-${targetTerm.id}`,
+					`Move ${course.code} to ${targetTerm.label}`,
+					`Moved ${course.code} to ${targetTerm.label} to restore prerequisite order.`,
+					simulation.plannerState,
+					`Push ${course.code} to the earliest valid later term.`,
+					simulation.selectedOpportunityId,
+				);
+
+				if (
+					!bestOption ||
+					nextGraduationIndex < bestOption.nextGraduationIndex ||
+					(nextGraduationIndex === bestOption.nextGraduationIndex &&
+						targetTermIndex < bestOption.targetTermIndex) ||
+					(nextGraduationIndex === bestOption.nextGraduationIndex &&
+						targetTermIndex === bestOption.targetTermIndex &&
+						simulation.assessment.issueCount < bestOption.issueCount)
+				) {
+					bestOption = {
+						issueCount: simulation.assessment.issueCount,
+						nextGraduationIndex,
+						targetTermIndex,
+						option,
+					};
+				}
+			}
+		}
+
+		return bestOption
+			? {
+					kind: "fix" as const,
+					label: "Fix",
+					option: bestOption.option,
+			  }
+			: null;
+	}
+
+	function buildLoadReliefAction(
+		insight: PlanInsight,
+		sourceSnapshot: PlannerSnapshot,
+		sourceAssessment: typeof planAssessment,
+	) {
+		if (!insight.linkedTermId || !sourceAssessment) return null;
+
+		const sourceTerm = getSnapshotTerm(sourceSnapshot, insight.linkedTermId);
+		if (!sourceTerm) return null;
+
+		const currentGraduationTermId =
+			getProjectedGraduationTermId(sourceSnapshot);
+		const currentGraduationIndex = currentGraduationTermId
+			? getTermIndex(currentGraduationTermId)
+			: -1;
+		const currentPrereqIssueCount = getPrerequisiteIssueCount(
+			sourceAssessment.insights,
+		);
+
+		let bestOption:
+			| {
+					issueCount: number;
+					nextGraduationIndex: number;
+					targetTermIndex: number;
+					option: InsightActionOption;
+			  }
+			| null = null;
+
+		for (const course of [...sourceTerm.courses]
+			.filter((scheduledCourse) => scheduledCourse.status === "planned")
+			.sort((left, right) => right.order - left.order)) {
+			for (const targetTerm of ACADEMIC_TERMS) {
+				const targetTermIndex = getTermIndex(targetTerm.id);
+				if (
+					targetTermIndex <= getTermIndex(sourceTerm.term.id) ||
+					!isFutureTerm(targetTerm.id) ||
+					!course.allowedTerms.includes(getTermPattern(targetTerm.kind))
+				) {
+					continue;
+				}
+
+				const simulation = simulatePlannerState(
+					buildPinnedCourseState(
+						workingPlannerState,
+						course.id,
+						targetTerm.id,
+					),
+				);
+				if (!simulation) continue;
+
+				const nextSourceTerm = getSnapshotTerm(
+					simulation.snapshot,
+					sourceTerm.term.id,
+				);
+				const nextTargetTerm = getSnapshotTerm(
+					simulation.snapshot,
+					targetTerm.id,
+				);
+				const nextGraduationTermId = getProjectedGraduationTermId(
+					simulation.snapshot,
+				);
+				const nextGraduationIndex = nextGraduationTermId
+					? getTermIndex(nextGraduationTermId)
+					: currentGraduationIndex;
+
+				if (
+					!nextSourceTerm ||
+					!nextTargetTerm ||
+					simulation.assessment.insights.some(
+						(nextInsight) => nextInsight.id === insight.id,
+					) ||
+					nextTargetTerm.overload ||
+					getPrerequisiteIssueCount(simulation.assessment.insights) >
+						currentPrereqIssueCount
+				) {
+					continue;
+				}
+
+				const option = buildInsightActionOption(
+					`load-${course.id}-${targetTerm.id}`,
+					`Move ${course.code} to ${targetTerm.label}`,
+					`Moved ${course.code} to ${targetTerm.label} to rebalance ${sourceTerm.term.label}.`,
+					simulation.plannerState,
+					`Relieve pressure in ${sourceTerm.term.label} by moving one course later.`,
+					simulation.selectedOpportunityId,
+				);
+
+				if (
+					!bestOption ||
+					nextGraduationIndex < bestOption.nextGraduationIndex ||
+					(nextGraduationIndex === bestOption.nextGraduationIndex &&
+						targetTermIndex < bestOption.targetTermIndex) ||
+					(nextGraduationIndex === bestOption.nextGraduationIndex &&
+						targetTermIndex === bestOption.targetTermIndex &&
+						simulation.assessment.issueCount < bestOption.issueCount)
+				) {
+					bestOption = {
+						issueCount: simulation.assessment.issueCount,
+						nextGraduationIndex,
+						targetTermIndex,
+						option,
+					};
+				}
+			}
+		}
+
+		return bestOption
+			? {
+					kind: "fix" as const,
+					label: "Fix",
+					option: bestOption.option,
+			  }
+			: null;
+	}
+
+	function buildUnderloadInsightAction(
+		insight: PlanInsight,
+		sourceSnapshot: PlannerSnapshot,
+		sourceAssessment: typeof planAssessment,
+	) {
+		if (!insight.linkedTermId || !sourceAssessment) return null;
+
+		const targetTerm = getSnapshotTerm(sourceSnapshot, insight.linkedTermId);
+		const targetAcademicTerm =
+			ACADEMIC_TERMS[getTermIndex(insight.linkedTermId)] ?? null;
+		if (!targetTerm || !targetAcademicTerm) return null;
+
+		const currentGraduationTermId =
+			getProjectedGraduationTermId(sourceSnapshot);
+		const currentGraduationIndex = currentGraduationTermId
+			? getTermIndex(currentGraduationTermId)
+			: -1;
+		const currentPrereqIssueCount = getPrerequisiteIssueCount(
+			sourceAssessment.insights,
+		);
+
+		const options: Array<{
+			issueCount: number;
+			nextGraduationIndex: number;
+			option: InsightActionOption;
+		}> = [];
+
+		for (const { course, termId: currentTermId } of getPlannedCoursePlacements(
+			sourceSnapshot,
+		)) {
+			if (
+				getTermIndex(currentTermId) <= getTermIndex(targetTerm.term.id) ||
+				!course.allowedTerms.includes(
+					getTermPattern(targetAcademicTerm.kind),
+				)
+			) {
+				continue;
+			}
+
+			const simulation = simulatePlannerState(
+				buildPinnedCourseState(
+					workingPlannerState,
+					course.id,
+					targetTerm.term.id,
+				),
+			);
+			if (!simulation) continue;
+
+			const nextTargetTerm = getSnapshotTerm(
+				simulation.snapshot,
+				targetTerm.term.id,
+			);
+			const nextGraduationTermId = getProjectedGraduationTermId(
+				simulation.snapshot,
+			);
+			const nextGraduationIndex = nextGraduationTermId
+				? getTermIndex(nextGraduationTermId)
+				: currentGraduationIndex;
+
+			if (
+				!nextTargetTerm ||
+				nextTargetTerm.overload ||
+				simulation.assessment.insights.some(
+					(nextInsight) => nextInsight.id === insight.id,
+				) ||
+				getPrerequisiteIssueCount(simulation.assessment.insights) >
+					currentPrereqIssueCount
+			) {
+				continue;
+			}
+
+			options.push({
+				issueCount: simulation.assessment.issueCount,
+				nextGraduationIndex,
+				option: buildInsightActionOption(
+					`underload-${course.id}-${targetTerm.term.id}`,
+					`Move ${course.code} into ${targetAcademicTerm.label}`,
+					`Moved ${course.code} into ${targetAcademicTerm.label}.`,
+					simulation.plannerState,
+					`Fill ${targetAcademicTerm.label} with another planned course.`,
+					simulation.selectedOpportunityId,
+				),
+			});
+		}
+
+		if (options.length === 0) return null;
+
+		return {
+			kind: "options" as const,
+			label: "Options",
+			options: options
+				.sort((left, right) => {
+					if (left.nextGraduationIndex !== right.nextGraduationIndex) {
+						return left.nextGraduationIndex - right.nextGraduationIndex;
+					}
+
+					if (left.issueCount !== right.issueCount) {
+						return left.issueCount - right.issueCount;
+					}
+
+					return left.option.label.localeCompare(right.option.label);
+				})
+				.slice(0, 3)
+				.map((entry) => entry.option),
+		};
+	}
+
+	function getInsightAction(insight: PlanInsight): InsightUiAction | null {
+		if (!snapshot || !planAssessment) return null;
+
+		if (insight.id === "timeline-shift") {
+			const options = buildTimelineTargetTermIds(snapshot)
+				.map((termId) =>
+					buildTimelineOption(termId, snapshot, planAssessment),
+				)
+				.filter(Boolean) as InsightActionOption[];
+
+			return options.length > 0
+				? {
+						kind: "options",
+						label: "Options",
+						options,
+				  }
+				: null;
+		}
+
+		if (insight.id === "engw-online-option") {
+			return buildWritingInsightAction(snapshot);
+		}
+
+		if (insight.id.startsWith("prereq-")) {
+			return buildPrereqInsightAction(
+				insight,
+				snapshot,
+				planAssessment,
+			);
+		}
+
+		if (
+			insight.id.startsWith("overload-") ||
+			insight.id.startsWith("internship-load-")
+		) {
+			return buildLoadReliefAction(
+				insight,
+				snapshot,
+				planAssessment,
+			);
+		}
+
+		if (insight.id.startsWith("underload-")) {
+			return buildUnderloadInsightAction(
+				insight,
+				snapshot,
+				planAssessment,
+			);
+		}
+
+		return null;
 	}
 
 	function replaceUploadedDocumentUrl(nextUrl: string | null) {
@@ -990,6 +1959,33 @@ export function TermShiftApp() {
 		profileHighlightTimeoutRef.current = window.setTimeout(() => {
 			setHighlightedProfileSection(null);
 		}, 2400);
+	}
+
+	function beginProcessingExit() {
+		setProcessingIsExiting(true);
+
+		if (processingExitTimeoutRef.current) {
+			window.clearTimeout(processingExitTimeoutRef.current);
+		}
+
+		processingExitTimeoutRef.current = window.setTimeout(() => {
+			setProcessingState(null);
+			setProcessingIsExiting(false);
+			processingExitTimeoutRef.current = null;
+		}, 240);
+	}
+
+	function showLockedTermPopup() {
+		setLockedTermPopup("Current semester locked");
+
+		if (lockedTermPopupTimeoutRef.current) {
+			window.clearTimeout(lockedTermPopupTimeoutRef.current);
+		}
+
+		lockedTermPopupTimeoutRef.current = window.setTimeout(() => {
+			setLockedTermPopup(null);
+			lockedTermPopupTimeoutRef.current = null;
+		}, 1800);
 	}
 
 	function canInteractWithTerm(termId: string) {
@@ -1030,7 +2026,11 @@ export function TermShiftApp() {
 
 		setBlockContextMenu(null);
 		setPlannerState((current) => {
-			const spanTermIds = getDefaultBlockSpan(termId, blockType);
+			const spanTermIds = getDefaultBlockSpan(
+				termId,
+				blockType,
+				canInteractWithTerm,
+			);
 
 			if (
 				spanTermIds.length === 0 ||
@@ -1214,9 +2214,13 @@ export function TermShiftApp() {
 	function resetPlan() {
 		setBlockContextMenu(null);
 		setSaveScenarioModal((current) => ({ ...current, isOpen: false }));
+		setExpandedInsightId(null);
+		setUndoPlannerAction(null);
+		setScenarioReturnState(null);
 		setPlannerState(clonePlannerState(savedPlannerState));
 		setSelectedOpportunityId(null);
 		setActiveScenarioId(null);
+		setDraftFingerprint(serializePlannerState(savedPlannerState));
 	}
 
 	function openSaveScenarioModal() {
@@ -1236,13 +2240,13 @@ export function TermShiftApp() {
 	}
 
 	function saveScenario() {
-		if (!snapshot || !planAssessment) return;
+		if (!snapshot || !planAssessment || !isDirty) return;
 
 		const scenarioTitle =
 			saveScenarioModal.value.trim() || saveScenarioModal.defaultTitle;
 
 		const nextScenario: SavedScenario = {
-			id: activeSavedScenario?.id ?? createScenarioId(),
+			id: createScenarioId(),
 			issueCount: planAssessment.issueCount,
 			opportunityId: selectedOpportunityId,
 			plannerState: clonePlannerState(plannerState),
@@ -1252,25 +2256,17 @@ export function TermShiftApp() {
 			updatedAt: new Date().toISOString(),
 		};
 
-		setSavedScenarios((current) => {
-			const existingIndex = current.findIndex(
-				(scenario) => scenario.id === nextScenario.id,
-			);
-
-			if (existingIndex === -1) {
-				return [nextScenario, ...current];
-			}
-
-			const updated = [...current];
-			updated[existingIndex] = nextScenario;
-			return updated.sort(
+		setSavedScenarios((current) =>
+			[nextScenario, ...current].sort(
 				(left, right) =>
 					new Date(right.updatedAt).getTime() -
 					new Date(left.updatedAt).getTime(),
-			);
-		});
-		setActiveScenarioId(nextScenario.id);
+			),
+		);
 		setSaveScenarioModal((current) => ({ ...current, isOpen: false }));
+		setActiveScenarioId(null);
+		setScenarioReturnState(null);
+		setDraftFingerprint(currentFingerprint);
 	}
 
 	function loadSavedScenario(scenarioId: string) {
@@ -1279,20 +2275,61 @@ export function TermShiftApp() {
 		);
 		if (!scenario) return;
 
+		if (!scenarioReturnState) {
+			setScenarioReturnState({
+				activeScenarioId,
+				browseOpportunityId,
+				draftFingerprint,
+				experimentMode,
+				plannerState: clonePlannerState(plannerState),
+				selectedOpportunityId,
+			});
+		}
+
 		setBlockContextMenu(null);
 		setSaveScenarioModal((current) => ({ ...current, isOpen: false }));
+		setExpandedInsightId(null);
+		setUndoPlannerAction(null);
 		setPlannerState(clonePlannerState(scenario.plannerState));
 		setSelectedOpportunityId(scenario.opportunityId);
 		setBrowseOpportunityId(scenario.opportunityId);
 		setActiveScenarioId(scenario.id);
+		setDraftFingerprint(serializePlannerState(scenario.plannerState));
 		setExperimentMode(true);
 		setActiveView("plan");
+	}
+
+	function exitLoadedScenario() {
+		if (!scenarioReturnState) {
+			setActiveScenarioId(null);
+			setExpandedInsightId(null);
+			setUndoPlannerAction(null);
+			setExperimentMode(false);
+			setPlannerState(clonePlannerState(savedPlannerState));
+			setSelectedOpportunityId(null);
+			setBrowseOpportunityId(null);
+			setDraftFingerprint(serializePlannerState(savedPlannerState));
+			return;
+		}
+
+		setBlockContextMenu(null);
+		setSaveScenarioModal((current) => ({ ...current, isOpen: false }));
+		setExpandedInsightId(null);
+		setUndoPlannerAction(null);
+		setPlannerState(clonePlannerState(scenarioReturnState.plannerState));
+		setSelectedOpportunityId(scenarioReturnState.selectedOpportunityId);
+		setBrowseOpportunityId(scenarioReturnState.browseOpportunityId);
+		setActiveScenarioId(scenarioReturnState.activeScenarioId);
+		setDraftFingerprint(scenarioReturnState.draftFingerprint);
+		setExperimentMode(scenarioReturnState.experimentMode);
+		setScenarioReturnState(null);
 	}
 
 	function deleteSavedScenario(scenarioId: string) {
 		const deletingActive = scenarioId === activeScenarioId;
 
 		setSaveScenarioModal((current) => ({ ...current, isOpen: false }));
+		setExpandedInsightId(null);
 		setSavedScenarios((current) =>
 			current.filter((scenario) => scenario.id !== scenarioId),
 		);
@@ -1301,6 +2338,8 @@ export function TermShiftApp() {
 			setPlannerState(clonePlannerState(savedPlannerState));
 			setSelectedOpportunityId(null);
 			setActiveScenarioId(null);
+			setDraftFingerprint(serializePlannerState(savedPlannerState));
+			setScenarioReturnState(null);
 		}
 	}
 
@@ -1366,8 +2405,10 @@ export function TermShiftApp() {
 		const nextState = buildScenarioState(
 			clonePlannerState(savedPlannerState),
 			termIds,
-			"work-term",
-			`Co-op: ${opportunity.company}`,
+			opportunity.blockType ?? "work-term",
+			`${
+				opportunity.blockType === "internship" ? "Internship" : "Co-op"
+			}: ${opportunity.company}`,
 		);
 
 		setPlannerState(nextState);
@@ -1376,6 +2417,76 @@ export function TermShiftApp() {
 		setActiveScenarioId(null);
 		setExperimentMode(true);
 		setActiveView("plan");
+	}
+
+	async function importJobFromUrl() {
+		if (!profile || !savedSnapshot) return;
+
+		const trimmedUrl = importedJobForm.url.trim();
+		if (!trimmedUrl) {
+			setImportedJobForm((current) => ({
+				...current,
+				message: "Paste a public job link first.",
+				status: "error",
+			}));
+			return;
+		}
+
+		setImportedJobForm((current) => ({
+			...current,
+			message: "",
+			status: "loading",
+		}));
+
+		try {
+			const response = await fetch("/api/parse-job-url", {
+				body: JSON.stringify({ url: trimmedUrl }),
+				headers: {
+					"Content-Type": "application/json",
+				},
+				method: "POST",
+			});
+			const payload = (await response.json()) as
+				| ParseJobResponse
+				| { error?: string };
+
+			if (!response.ok || !("opportunity" in payload)) {
+				throw new Error(
+					payload && "error" in payload && payload.error
+						? payload.error
+						: "TermShift could not parse that job link yet.",
+				);
+			}
+
+			const scoredOpportunity = scoreOpportunity(
+				profile,
+				payload.opportunity,
+			);
+			const preview = buildOpportunityPreviewForSearch(scoredOpportunity);
+
+			if (!preview) {
+				throw new Error(
+					"TermShift could not model that role against your current plan.",
+				);
+			}
+
+			setImportedOpportunityPreview(preview);
+			setBrowseOpportunityId(preview.id);
+			setImportedJobForm((current) => ({
+				...current,
+				message: "Imported listing ready to test in plan.",
+				status: "idle",
+			}));
+		} catch (error) {
+			setImportedJobForm((current) => ({
+				...current,
+				message:
+					error instanceof Error
+						? error.message
+						: "TermShift could not parse that job link yet.",
+				status: "error",
+			}));
+		}
 	}
 
 	function finalizeProfileLoad(
@@ -1390,8 +2501,18 @@ export function TermShiftApp() {
 		setSavedPlannerState(clonePlannerState(DEFAULT_PLANNER_STATE));
 		setSavedScenarios([]);
 		setActiveScenarioId(null);
+		setDraftFingerprint(DEFAULT_PLANNER_FINGERPRINT);
+		setScenarioReturnState(null);
+		setExpandedInsightId(null);
 		setSelectedOpportunityId(null);
 		setBrowseOpportunityId(null);
+		setUndoPlannerAction(null);
+		setImportedOpportunityPreview(null);
+		setImportedJobForm({
+			message: "",
+			status: "idle",
+			url: "",
+		});
 		setExperimentMode(false);
 		setSaveScenarioModal({
 			defaultTitle: "",
@@ -1404,17 +2525,24 @@ export function TermShiftApp() {
 			selectedFileName: fileName,
 			status: "ready",
 		});
-		setProcessingState(null);
 		setActiveView("plan");
+		beginProcessingExit();
 	}
 
-	async function startInitialProcessing(demoProfileKey?: DemoProfileKey) {
-		const sampleAudit = demoProfileKey
-			? SAMPLE_AUDITS[demoProfileKey]
+	async function startInitialProcessing(sampleAuditKey?: SampleAuditKey) {
+		const sampleAudit = sampleAuditKey
+			? SAMPLE_AUDITS[sampleAuditKey]
 			: null;
+
+		if (sampleAudit && !sampleAudit.seedProfileKey) {
+			window.open(sampleAudit.url, "_blank", "noopener,noreferrer");
+			return;
+		}
+
 		const nextIdentity: IdentityState = sampleAudit
 			? {
-					fullName: identity.fullName.trim() || "Caroline Hughes",
+					fullName:
+						identity.fullName.trim() || sampleAudit.defaultFullName,
 					major: sampleAudit.major,
 					school: sampleAudit.school,
 			  }
@@ -1432,6 +2560,13 @@ export function TermShiftApp() {
 
 		const runId = processingRunRef.current + 1;
 		processingRunRef.current = runId;
+		setProcessingIsExiting(false);
+
+		if (processingExitTimeoutRef.current) {
+			window.clearTimeout(processingExitTimeoutRef.current);
+			processingExitTimeoutRef.current = null;
+		}
+
 		setIdentity(nextIdentity);
 		setDemoMaterialsOpen(false);
 		setUploadState({
@@ -1473,7 +2608,7 @@ export function TermShiftApp() {
 				}
 
 				const baseProfile = sampleAudit
-					? buildDemoProfile(fileName, sampleAudit.profileKey)
+					? buildDemoProfile(fileName, sampleAudit.seedProfileKey)
 					: buildProfileFromUpload(fileName, extractedText);
 				const nextProfile = applyIdentityToProfile(
 					baseProfile,
@@ -1488,7 +2623,7 @@ export function TermShiftApp() {
 				const fallbackProfile = applyIdentityToProfile(
 					buildDemoProfile(
 						fileName,
-						sampleAudit?.profileKey ?? "sophomore",
+						sampleAudit?.seedProfileKey ?? "sophomore",
 					),
 					nextIdentity,
 				);
@@ -1522,7 +2657,7 @@ export function TermShiftApp() {
 
 		const result = await loadProfilePromise;
 
-		await delay(1550);
+		await delay(3400);
 
 		if (processingRunRef.current !== runId) {
 			if (documentUrl.startsWith("blob:")) {
@@ -1613,7 +2748,20 @@ export function TermShiftApp() {
 	function resetToLanding() {
 		processingRunRef.current += 1;
 		window.localStorage.removeItem(APP_STORAGE_KEY);
+		setExpandedInsightId(null);
+		setScenarioReturnState(null);
+		setUndoPlannerAction(null);
 		replaceUploadedDocumentUrl(null);
+
+		if (processingExitTimeoutRef.current) {
+			window.clearTimeout(processingExitTimeoutRef.current);
+			processingExitTimeoutRef.current = null;
+		}
+
+		if (lockedTermPopupTimeoutRef.current) {
+			window.clearTimeout(lockedTermPopupTimeoutRef.current);
+			lockedTermPopupTimeoutRef.current = null;
+		}
 
 		if (processingState?.documentUrl.startsWith("blob:")) {
 			URL.revokeObjectURL(processingState.documentUrl);
@@ -1627,10 +2775,18 @@ export function TermShiftApp() {
 		setActiveScenarioId(null);
 		setSelectedOpportunityId(null);
 		setBrowseOpportunityId(null);
+		setImportedOpportunityPreview(null);
+		setImportedJobForm({
+			message: "",
+			status: "idle",
+			url: "",
+		});
 		setExperimentMode(false);
 		setSidebarCollapsed(false);
 		setPendingUpload(null);
 		setProcessingState(null);
+		setProcessingIsExiting(false);
+		setLockedTermPopup(null);
 		setDemoMaterialsOpen(false);
 		setBlockContextMenu(null);
 		setHighlightedProfileSection(null);
@@ -1661,6 +2817,42 @@ export function TermShiftApp() {
 			...current,
 			[section]: !current[section],
 		}));
+	}
+
+	function buildOpportunityPreviewForSearch(
+		opportunity: OpportunitySuggestion,
+	) {
+		if (!profile || !savedSnapshot) return null;
+
+		const scenarioTerms = getTermIdsBetween(
+			opportunity.termStartId,
+			opportunity.termEndId,
+		);
+		const blockLabel =
+			opportunity.blockType === "internship"
+				? `Internship: ${opportunity.company}`
+				: `Co-op: ${opportunity.company}`;
+		const scenarioState = buildScenarioState(
+			clonePlannerState(savedPlannerState),
+			scenarioTerms,
+			opportunity.blockType ?? "work-term",
+			blockLabel,
+		);
+		const scenarioSnapshot = derivePlannerSnapshot(profile, scenarioState);
+		const scenarioAssessment = buildPlanAssessment({
+			baselineSnapshot: savedSnapshot,
+			experimentMode: true,
+			profile,
+			selectedOpportunity: opportunity,
+			snapshot: scenarioSnapshot,
+		});
+
+		return {
+			...opportunity,
+			issueCount: scenarioAssessment.issueCount,
+			projectedGraduation: scenarioSnapshot.projectedGraduation,
+			topIssues: scenarioAssessment.topIssueTexts,
+		};
 	}
 
 	function highlightAndScrollInsight(insightId: string) {
@@ -1698,12 +2890,6 @@ export function TermShiftApp() {
 				))}
 			</div>
 		);
-	}
-
-	function renderTermStateBadge(termId: string) {
-		if (!profile || termId !== profile.lockedThroughTermId) return null;
-
-		return <span className="term-state-badge">Current</span>;
 	}
 
 	function renderCourse(course: ScheduledCourse, termId: string) {
@@ -1770,6 +2956,18 @@ export function TermShiftApp() {
 		const isInteractive = canInteractWithTerm(termId);
 		const isStart = blockGroup.startTermId === termId;
 		const isEnd = blockGroup.endTermId === termId;
+		const previousTermId = isStart
+			? null
+			: ACADEMIC_TERMS[getTermIndex(termId) - 1]?.id ?? null;
+		const nextTermId = isEnd
+			? null
+			: ACADEMIC_TERMS[getTermIndex(termId) + 1]?.id ?? null;
+		const extendsFromVisibleLeft = previousTermId
+			? areTermsVisuallyAdjacent(previousTermId, termId)
+			: false;
+		const extendsToVisibleRight = nextTermId
+			? areTermsVisuallyAdjacent(termId, nextTermId)
+			: false;
 		const showHandles =
 			isInteractive &&
 			(blockGroup.type === "work-term" ||
@@ -1783,8 +2981,10 @@ export function TermShiftApp() {
 				draggable={isInteractive}
 				className={`placed-block ${
 					PLACED_BLOCK_TONES[blockGroup.type]
-				} ${isStart ? "" : "is-continued-left"} ${
-					isEnd ? "" : "is-continued-right"
+				} ${
+					extendsFromVisibleLeft ? "is-continued-left" : ""
+				} ${
+					extendsToVisibleRight ? "is-continued-right" : ""
 				}`}
 				onDragStart={(event) => {
 					if (!isInteractive) return;
@@ -1965,15 +3165,20 @@ export function TermShiftApp() {
 		if (!profile) {
 			return (
 				<section className="landing-screen">
-					<TermShiftLogo
-						size={152}
-						className="termshift-logo--landing"
-					/>
+					<div className="landing-hero">
+						<TermShiftLogo
+							size={152}
+							className="termshift-logo--landing"
+						/>
+
+						<div className="landing-hero-copy">
+							<h1 className="screen-title">
+								Graduate with more than a diploma.
+							</h1>
+						</div>
+					</div>
 
 					<div className="landing-copy">
-						<h1 className="screen-title">
-							Graduate with more than a diploma.
-						</h1>
 						<p className="screen-intro">
 							The best time to get your first real industry
 							experience isn&apos;t after graduation; it&apos;s
@@ -1982,10 +3187,10 @@ export function TermShiftApp() {
 						<p className="screen-intro">
 							Universities across North America now support
 							co-ops, internships, and semester-long work terms
-							for academic credit. <br></br>But figuring out when
-							you can take one, which jobs you&apos;re qualified
-							for, and whether it will delay graduation is
-							surprisingly difficult.
+							for academic credit. <br />
+							But figuring out when you can take one, which jobs
+							you&apos;re qualified for, and whether it will delay
+							graduation is surprisingly difficult.
 						</p>
 						<p className="screen-intro">
 							<strong>TermShift</strong> helps you discover
@@ -1994,12 +3199,19 @@ export function TermShiftApp() {
 							timeline, so you can graduate with both a diploma
 							and real experience.
 						</p>
+						{/* <p className="screen-intro">
+							<strong>
+								Get started today by uploading an unofficial
+								transcript or degree audit.
+							</strong>
+						</p> */}
 					</div>
 
 					<div className="landing-setup">
 						<p className="landing-setup-title">
 							Get started today by uploading an unofficial
-							transcript or degree audit.
+							transcript or degree audit
+							<ArrowRightIcon className="landing-setup-title-icon" />
 						</p>
 
 						<div className="landing-setup-grid landing-setup-grid--intake">
@@ -2120,68 +3332,87 @@ export function TermShiftApp() {
 									{demoMaterialsOpen ? "▾" : "▸"}
 								</span>
 								<span className="landing-demo-trigger-label">
-									Test / demo materials
+									Test / Demo Materials
 								</span>
 							</button>
 
 							{demoMaterialsOpen ? (
 								<div className="landing-demo-box">
-									<p className="landing-demo-copy">
-										Test TermShift using the example degree
-										audit.
-									</p>
-									<p className="landing-demo-copy">
-										Use the seeded Northeastern B.S. in
-										Computer Science example audit
-										instantly, or download the sample PDFs
-										for the upload flow.
-									</p>
-									<p className="landing-demo-copy">
-										This demo instance is currently
-										configured for Northeastern
-										University&apos;s B.S. in Computer
-										Science planning model.
-									</p>
-									<div className="detail-actions">
-										<button
-											type="button"
-											className="plan-action-button plan-action-button--primary"
-											onClick={() =>
-												startInitialProcessing(
-													"sophomore",
-												)
-											}
-										>
-											Use example degree audit
-										</button>
-									</div>
-									<div className="landing-demo">
-										<p className="profile-label">
-											Download sample degree audits
+									{selectedSampleAudit ? (
+										<>
+											<p className="landing-demo-copy">
+												{selectedSampleAudit.seedProfileKey
+													? "Click the button below to test TermShift using the "
+													: "Open the "}
+												<a
+													href={
+														selectedSampleAudit.url
+													}
+													target="_blank"
+													rel="noreferrer"
+													className="profile-inline-link"
+												>
+													example degree audit
+												</a>{" "}
+												for{" "}
+												<strong>
+													{selectedSampleAudit.school}
+													,{" "}
+													{
+														PROGRAM_LABELS[
+															selectedSampleAudit
+																.major
+														]
+													}
+												</strong>
+												.
+											</p>
+											{selectedSampleAudit.seedProfileKey ? (
+												<div className="detail-actions">
+													<button
+														type="button"
+														className="plan-action-button plan-action-button--primary"
+														onClick={() =>
+															startInitialProcessing(
+																selectedSampleAuditKey ??
+																	undefined,
+															)
+														}
+													>
+														Use example degree audit
+													</button>
+												</div>
+											) : (
+												<>
+													<p className="landing-demo-copy">
+														This sample is ready for
+														upload testing now. Full
+														degree-path modeling for
+														Columbia is not seeded
+														in this MVP yet.
+													</p>
+													<div className="detail-actions">
+														<a
+															href={
+																selectedSampleAudit.url
+															}
+															target="_blank"
+															rel="noreferrer"
+															className="plan-action-button"
+														>
+															Open example degree
+															audit
+														</a>
+													</div>
+												</>
+											)}
+										</>
+									) : (
+										<p className="landing-demo-copy">
+											Select your school and major to load
+											the matching example degree audit.
 										</p>
-										<div className="landing-demo-links">
-											<a
-												href={
-													SAMPLE_AUDITS.sophomore.url
-												}
-												target="_blank"
-												rel="noreferrer"
-												className="plan-action-button"
-											>
-												{SAMPLE_AUDITS.sophomore.label}
-											</a>
-											<a
-												href={
-													SAMPLE_AUDITS.inProgress.url
-												}
-												target="_blank"
-												rel="noreferrer"
-												className="plan-action-button"
-											>
-												{SAMPLE_AUDITS.inProgress.label}
-											</a>
-										</div>
-									</div>
+									)}
 								</div>
 							) : null}
 
@@ -2241,7 +3472,7 @@ export function TermShiftApp() {
 						}`}
 					>
 						<span className="profile-label">
-							Upload (Transcript / Degree Audit)
+							Transcript / Degree Audit
 						</span>
 						<span className="profile-value">
 							{uploadedDocumentUrl ? (
@@ -2259,7 +3490,7 @@ export function TermShiftApp() {
 						</span>
 						<div className="profile-actions-row profile-actions-row--stacked">
 							<label className="plan-action-button upload-button">
-								Replace
+								Replace Upload
 								<input
 									type="file"
 									accept=".pdf,.txt"
@@ -2294,7 +3525,7 @@ export function TermShiftApp() {
 		if (!profile || !snapshot || !savedSnapshot) return null;
 
 		return (
-			<section className="pathwise-screen pathwise-screen--search">
+			<section className="pathwise-screen pathwise-screen--plan">
 				<header className="screen-header">
 					<div className="path-plan-topline">
 						{renderScreenTitle("Degree Path")}
@@ -2330,32 +3561,71 @@ export function TermShiftApp() {
 					</div>
 
 					<div className="path-plan-subline">
-						{experimentMode ? (
-							<p className="screen-intro">
-								Experimental degree plan.
+						<div className="path-plan-subline-copy">
+							<p className="path-plan-subline-title">
+								{isViewingSavedScenario
+									? `Viewing Scenario: ${activeSavedScenario?.title}`
+									: experimentMode
+										? "Experimental Plan Mode"
+										: "Viewing Current Plan"}
 							</p>
-						) : (
-							<p className="screen-intro">
-								Optimized degree plan, given{" "}
-								<button
-									type="button"
-									className="inline-link-button"
-									onClick={highlightProfileUploadSection}
-								>
-									Uploaded degree audit
-								</button>
-								, and the{" "}
-								<a
-									href={REQUIREMENTS_URL}
-									target="_blank"
-									rel="noreferrer"
-									className="inline-link-button"
-								>
-									{requirementsLinkLabel}
-								</a>
-								.
+							<p className="path-plan-subline-body">
+								{isViewingSavedScenario ? (
+									<>
+										Loaded from Saved Scenarios.{" "}
+										<button
+											type="button"
+											className="inline-link-button"
+											onClick={exitLoadedScenario}
+										>
+											Exit scenario
+										</button>{" "}
+										to return to your previous state.
+									</>
+								) : experimentMode ? (
+									<>
+										Model how co-ops, internships, or time
+										off would shift your course sequence and
+										projected graduation. You can also test
+										a role from{" "}
+										<button
+											type="button"
+											className="inline-link-button"
+											onClick={() =>
+												navigateToView("search")
+											}
+										>
+											Work Term Search
+										</button>{" "}
+										directly in this plan.
+									</>
+								) : (
+									<>
+										TermShift&apos;s current best-fit degree
+										path, based on your{" "}
+										<button
+											type="button"
+											className="inline-link-button"
+											onClick={
+												highlightProfileUploadSection
+											}
+										>
+											uploaded degree audit
+										</button>{" "}
+										and Northeastern&apos;s{" "}
+										<a
+											href={REQUIREMENTS_URL}
+											target="_blank"
+											rel="noreferrer"
+											className="inline-link-button"
+										>
+											{requirementsLinkLabel}
+										</a>
+										.
+									</>
+								)}
 							</p>
-						)}
+						</div>
 
 						<div className="path-plan-header-summary">
 							<div className="summary-pill">
@@ -2390,9 +3660,8 @@ export function TermShiftApp() {
 								</span>
 								<span className="summary-pill-copy">
 									<strong className="summary-pill-value">
-										{experimentMode
-											? experimentSnapshot?.projectedGraduation
-											: savedSnapshot.projectedGraduation}
+										{snapshot?.projectedGraduation ??
+											savedSnapshot.projectedGraduation}
 									</strong>
 								</span>
 							</div>
@@ -2401,8 +3670,9 @@ export function TermShiftApp() {
 				</header>
 
 				<div className="path-plan-board">
-					<div className="path-plan-calendar-wrap">
-						<div className="path-plan-grid">
+					<div className="path-plan-main-column">
+						<div className="path-plan-calendar-wrap">
+							<div className="path-plan-grid">
 							<div />
 							{TERM_ORDER.map((kind) => (
 								<div
@@ -2465,7 +3735,18 @@ export function TermShiftApp() {
 														: ""
 												}`}
 												onDragOver={(event) => {
-													if (!canDrop || !termId)
+													if (!termId)
+														return;
+													if (
+														isCurrentTerm &&
+														experimentMode
+													) {
+														event.preventDefault();
+														event.dataTransfer.dropEffect =
+															"none";
+														return;
+													}
+													if (!canDrop)
 														return;
 													event.preventDefault();
 													setDraggingTermId(termId);
@@ -2477,17 +3758,21 @@ export function TermShiftApp() {
 												}}
 												onDrop={(event) => {
 													if (!termId) return;
+													if (
+														isCurrentTerm &&
+														experimentMode
+													) {
+														event.preventDefault();
+														setDraggingTermId(null);
+														showLockedTermPopup();
+														return;
+													}
 													handleTermDrop(
 														termId,
 														event,
 													);
 												}}
 											>
-												{termId
-													? renderTermStateBadge(
-															termId,
-													  )
-													: null}
 												{termId
 													? renderTermIssueDots(
 															termId,
@@ -2508,7 +3793,72 @@ export function TermShiftApp() {
 									})}
 								</Fragment>
 							))}
+							</div>
 						</div>
+
+						<section className="saved-scenarios-section rail-section rail-section--divided">
+							<button
+								type="button"
+								className="rail-section-toggle"
+								onClick={() => toggleRailSection("savedScenarios")}
+								aria-expanded={!collapsedRailSections.savedScenarios}
+							>
+								<span className="block-label">
+									Saved Scenarios ({savedScenarios.length})
+								</span>
+								<span className="rail-section-caret" aria-hidden="true">
+									{collapsedRailSections.savedScenarios ? "+" : "−"}
+								</span>
+							</button>
+							{collapsedRailSections.savedScenarios ? null : savedScenarios.length >
+							  0 ? (
+								<div
+									className="saved-scenarios-carousel"
+									role="region"
+									aria-label="Saved scenarios"
+								>
+									{savedScenarios.map((scenario) => (
+										<article
+											key={scenario.id}
+											className={`saved-scenario-card ${
+												activeScenarioId === scenario.id
+													? "is-active"
+													: ""
+											}`}
+										>
+											<button
+												type="button"
+												className="saved-scenario-card-select"
+												onClick={() => loadSavedScenario(scenario.id)}
+											>
+												<strong className="saved-scenario-title">
+													{scenario.title}
+												</strong>
+												<span className="saved-scenario-meta">
+													Projected grad {scenario.projectedGraduation}
+												</span>
+												<span className="saved-scenario-meta">
+													{scenario.issueCount}{" "}
+													{scenario.issueCount === 1 ? "issue" : "issues"}
+												</span>
+											</button>
+											<button
+												type="button"
+												aria-label={`Delete ${scenario.title}`}
+												className="saved-scenario-delete"
+												onClick={() => deleteSavedScenario(scenario.id)}
+											>
+												Delete
+											</button>
+										</article>
+									))}
+								</div>
+							) : (
+								<p className="rail-copy">
+									Saved what-if paths will appear here.
+								</p>
+							)}
+						</section>
 					</div>
 
 					<aside className="path-plan-blocks">
@@ -2544,7 +3894,7 @@ export function TermShiftApp() {
 							)}
 						</div>
 
-						<div className="rail-section rail-section--divided">
+						<div className="rail-section rail-section--divided rail-section--insights">
 							<button
 								type="button"
 								className="rail-section-toggle"
@@ -2564,6 +3914,10 @@ export function TermShiftApp() {
 							{planAssessment ? (
 								<div
 									className={`insight-scroll ${
+										experimentMode && isDirty
+											? "has-floating-actions"
+											: ""
+									} ${
 										collapsedRailSections.insights
 											? "is-collapsed"
 											: ""
@@ -2571,47 +3925,141 @@ export function TermShiftApp() {
 								>
 									<ul className="insight-list">
 										{planAssessment.insights.map(
-											(insight) => (
-												<li
-													key={insight.id}
-													ref={(node) => {
-														insightItemRefs.current.set(
-															insight.id,
-															node,
-														);
-													}}
-													className={`insight-item ${getIssueToneClass(
-														insight.tone,
-													)} ${
-														highlightedInsightId ===
-														insight.id
-															? "is-highlighted"
-															: ""
-													}`}
-													onMouseEnter={() =>
-														setHighlightedInsightId(
-															insight.id,
-														)
-													}
-													onMouseLeave={() =>
-														setHighlightedInsightId(
-															null,
-														)
-													}
-												>
-													<span className="insight-dot" />
-													<div className="insight-copy">
-														<strong className="insight-title">
-															{insight.title}
-														</strong>
-														<p className="insight-description">
-															{
-																insight.description
-															}
-														</p>
-													</div>
-												</li>
-											),
+											(insight) => {
+												const insightAction =
+													getInsightAction(insight);
+												const isExpanded =
+													expandedInsightId ===
+													insight.id;
+
+												return (
+													<li
+														key={insight.id}
+														ref={(node) => {
+															insightItemRefs.current.set(
+																insight.id,
+																node,
+															);
+														}}
+														className={`insight-item ${getIssueToneClass(
+															insight.tone,
+														)} ${
+															highlightedInsightId ===
+															insight.id
+																? "is-highlighted"
+																: ""
+														}`}
+														onMouseEnter={() =>
+															setHighlightedInsightId(
+																insight.id,
+															)
+														}
+														onMouseLeave={() =>
+															setHighlightedInsightId(
+																null,
+															)
+														}
+													>
+														<span className="insight-dot" />
+														<div className="insight-body">
+															<div className="insight-main-row">
+																<p className="insight-line">
+																	<strong className="insight-title">
+																		{
+																			insight.title
+																		}
+																	</strong>{" "}
+																	<span className="insight-description">
+																		{
+																			insight.description
+																		}
+																	</span>
+																</p>
+																{insightAction ? (
+																	<button
+																		type="button"
+																		className="insight-action-button"
+																		onClick={() =>
+																			insightAction.kind ===
+																			"fix"
+																				? applyInsightOption(
+																						insightAction.option,
+																				  )
+																				: setExpandedInsightId(
+																						isExpanded
+																							? null
+																							: insight.id,
+																				  )
+																		}
+																		aria-expanded={
+																			insightAction.kind ===
+																			"options"
+																				? isExpanded
+																				: undefined
+																		}
+																		aria-label={
+																			insightAction.kind ===
+																			"fix"
+																				? "Apply suggested fix"
+																				: isExpanded
+																					? "Hide suggested options"
+																					: "Show suggested options"
+																		}
+																		title={
+																			insightAction.kind ===
+																			"fix"
+																				? "Apply suggested fix"
+																				: isExpanded
+																					? "Hide suggested options"
+																					: "Show suggested options"
+																		}
+																	>
+																		<span aria-hidden="true">
+																			✨
+																		</span>
+																	</button>
+																) : null}
+															</div>
+															{insightAction &&
+															insightAction.kind ===
+																"options" &&
+															isExpanded ? (
+																<div className="insight-action-panel">
+																	{insightAction.options.map(
+																		(option) => (
+																			<button
+																				key={
+																					option.id
+																				}
+																				type="button"
+																				className="insight-option-button"
+																				onClick={() =>
+																					applyInsightOption(
+																						option,
+																					)
+																				}
+																			>
+																				<span className="insight-option-label">
+																					{
+																						option.label
+																					}
+																				</span>
+																				{option.description ? (
+																					<span className="insight-option-description">
+																						{
+																							option.description
+																						}
+																					</span>
+																				) : null}
+																			</button>
+																		),
+																	)}
+																</div>
+															) : null}
+														</div>
+													</li>
+												);
+											},
 										)}
 									</ul>
 								</div>
@@ -2629,127 +4077,6 @@ export function TermShiftApp() {
 							)}
 						</div>
 
-						<div className="rail-section rail-section--divided">
-							<button
-								type="button"
-								className="rail-section-toggle"
-								onClick={() =>
-									toggleRailSection("recommendations")
-								}
-								aria-expanded={
-									!collapsedRailSections.recommendations
-								}
-							>
-								<span className="block-label">
-									Recommendations
-								</span>
-								<span
-									className="rail-section-caret"
-									aria-hidden="true"
-								>
-									{collapsedRailSections.recommendations
-										? "+"
-										: "−"}
-								</span>
-							</button>
-							{planAssessment &&
-							!collapsedRailSections.recommendations ? (
-								<ul className="recommendation-list">
-									{planAssessment.recommendations.map(
-										(recommendation) => (
-											<li
-												key={recommendation.id}
-												className="recommendation-item"
-											>
-												{recommendation.description}
-											</li>
-										),
-									)}
-								</ul>
-							) : null}
-						</div>
-
-						<div className="rail-section rail-section--divided">
-							<button
-								type="button"
-								className="rail-section-toggle"
-								onClick={() =>
-									toggleRailSection("savedScenarios")
-								}
-								aria-expanded={
-									!collapsedRailSections.savedScenarios
-								}
-							>
-								<span className="block-label">
-									Saved Scenarios ({savedScenarios.length})
-								</span>
-								<span
-									className="rail-section-caret"
-									aria-hidden="true"
-								>
-									{collapsedRailSections.savedScenarios
-										? "+"
-										: "−"}
-								</span>
-							</button>
-							{collapsedRailSections.savedScenarios ? null : savedScenarios.length >
-							  0 ? (
-								<ul className="saved-scenario-list">
-									{savedScenarios.map((scenario) => (
-										<li
-											key={scenario.id}
-											className={`saved-scenario-row ${
-												activeScenarioId === scenario.id
-													? "is-active"
-													: ""
-											}`}
-										>
-											<button
-												type="button"
-												className="saved-scenario-select"
-												onClick={() =>
-													loadSavedScenario(
-														scenario.id,
-													)
-												}
-											>
-												<strong className="saved-scenario-title">
-													{scenario.title}
-												</strong>
-												<span className="saved-scenario-meta">
-													Projected grad{" "}
-													{
-														scenario.projectedGraduation
-													}
-												</span>
-												<span className="saved-scenario-meta">
-													{scenario.issueCount}{" "}
-													{scenario.issueCount === 1
-														? "issue"
-														: "issues"}
-												</span>
-											</button>
-											<button
-												type="button"
-												aria-label={`Delete ${scenario.title}`}
-												className="saved-scenario-delete"
-												onClick={() =>
-													deleteSavedScenario(
-														scenario.id,
-													)
-												}
-											>
-												Delete
-											</button>
-										</li>
-									))}
-								</ul>
-							) : (
-								<p className="rail-copy">
-									Saved what-if paths will appear here.
-								</p>
-							)}
-						</div>
 					</aside>
 				</div>
 
@@ -2787,7 +4114,26 @@ export function TermShiftApp() {
 							className="plan-action-button plan-action-button--primary"
 							onClick={openSaveScenarioModal}
 						>
-							Save scenario
+							Save Scenario
+						</button>
+					</div>
+				) : null}
+
+				{undoPlannerAction ? (
+					<div
+						className={`planner-undo-toast ${
+							undoPlannerActionIsClosing ? "is-closing" : ""
+						}`}
+					>
+						<p className="planner-undo-copy">
+							{undoPlannerAction.message}
+						</p>
+						<button
+							type="button"
+							className="plan-action-button"
+							onClick={undoLastInsightAction}
+						>
+							Undo
 						</button>
 					</div>
 				) : null}
@@ -2861,6 +4207,12 @@ export function TermShiftApp() {
 						</div>
 					</div>
 				) : null}
+
+				{lockedTermPopup ? (
+					<div className="locked-term-popup" role="status" aria-live="polite">
+						{lockedTermPopup}
+					</div>
+				) : null}
 			</section>
 		);
 	}
@@ -2870,13 +4222,63 @@ export function TermShiftApp() {
 
 		return (
 			<section className="pathwise-screen pathwise-screen--search">
-				<header className="screen-header">
-					{renderScreenTitle("Work Term Search")}
-					<p className="screen-intro">
-						TermShift ranks work terms using the courses already on
-						your transcript, then lets you test a listing directly
-						in the planner before you commit to that scenario.
-					</p>
+				<header className="screen-header search-screen-header">
+					<div className="search-screen-header-copy">
+						{renderScreenTitle("Work Term Search")}
+						<p className="screen-intro">
+							TermShift ranks work terms using the courses already
+							on your transcript, then lets you test a listing
+							directly in the planner before you commit to that
+							scenario.
+						</p>
+					</div>
+					<div className="search-header-actions">
+						<div className="search-import-panel search-import-panel--header">
+							<p className="block-label">Try Any Role</p>
+							<form
+								className="search-import-form"
+								onSubmit={(event) => {
+									event.preventDefault();
+									void importJobFromUrl();
+								}}
+							>
+								<input
+									type="url"
+									value={importedJobForm.url}
+									placeholder="Paste a LinkedIn or Indeed job URL"
+									className="profile-input search-import-input"
+									onChange={(event) =>
+										setImportedJobForm((current) => ({
+											...current,
+											message: "",
+											status: "idle",
+											url: event.target.value,
+										}))
+									}
+								/>
+								<button
+									type="submit"
+									disabled={importedJobForm.status === "loading"}
+									className="plan-action-button"
+								>
+									{importedJobForm.status === "loading"
+										? "Importing..."
+										: "Import URL"}
+								</button>
+							</form>
+							{importedJobForm.message ? (
+								<p
+									className={`inline-note inline-note--${
+										importedJobForm.status === "error"
+											? "error"
+											: "ready"
+									}`}
+								>
+									{importedJobForm.message}
+								</p>
+							) : null}
+						</div>
+					</div>
 				</header>
 
 				<div className="search-layout">
@@ -2934,9 +4336,35 @@ export function TermShiftApp() {
 						</ul>
 					</div>
 
-					{activeSearchOpportunity ? (
+					{importedJobForm.status === "loading" ? (
+						<aside className="search-detail search-detail--loading">
+							<div
+								className="search-detail-loading-spinner"
+								aria-hidden="true"
+							/>
+							<div className="search-detail-loading-copy">
+								<p className="block-label">
+									Importing Listing
+								</p>
+								<h2 className="search-detail-title">
+									Parsing role details
+								</h2>
+								<p className="search-detail-copy">
+									TermShift is pulling the job post,
+									extracting the role details, and
+									modeling it against your degree plan.
+								</p>
+							</div>
+						</aside>
+					) : activeSearchOpportunity ? (
 						<aside className="search-detail">
-							<p className="block-label">Selected Listing</p>
+							<p className="block-label">
+								{activeSearchOpportunity.id.startsWith(
+									"imported-",
+								)
+									? "Imported Listing"
+									: "Selected Listing"}
+							</p>
 							<h2 className="search-detail-title">
 								{activeSearchOpportunity.title}
 							</h2>
@@ -2947,6 +4375,16 @@ export function TermShiftApp() {
 							<p className="search-detail-company">
 								{activeSearchOpportunity.termLabel}
 							</p>
+							{activeSearchOpportunity.sourceUrl ? (
+								<a
+									href={activeSearchOpportunity.sourceUrl}
+									target="_blank"
+									rel="noreferrer"
+									className="profile-inline-link"
+								>
+									View source
+								</a>
+							) : null}
 
 							<div className="tag-row">
 								{activeSearchOpportunity.focusAreas.map(
@@ -3047,14 +4485,32 @@ export function TermShiftApp() {
 		);
 	}
 
+	function renderProcessingOverlay() {
+		if (!processingState) return null;
+
+		return (
+			<div
+				className={`processing-overlay ${
+					processingIsExiting ? "is-exiting" : ""
+				}`}
+				aria-live="polite"
+			>
+				<div
+					className={`processing-overlay-panel processing-overlay-panel--${processingState.phase}`}
+				>
+					{renderProcessingScreen()}
+				</div>
+			</div>
+		);
+	}
+
 	if (!profile) {
 		return (
 			<main className="landing-shell">
 				<div className="landing-content">
-					{processingState
-						? renderProcessingScreen()
-						: renderProfileScreen()}
+					{renderProfileScreen()}
 				</div>
+				{renderProcessingOverlay()}
 			</main>
 		);
 	}
@@ -3154,6 +4610,7 @@ export function TermShiftApp() {
 				{activeView === "plan" ? renderPathPlan() : null}
 				{activeView === "search" ? renderSearch() : null}
 			</div>
+			{renderProcessingOverlay()}
 		</main>
 	);
 }

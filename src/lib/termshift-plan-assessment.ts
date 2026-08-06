@@ -16,30 +16,17 @@ export type PlanInsight = {
 	tone: PlanInsightTone;
 };
 
-export type PlanRecommendation = {
-	description: string;
-	id: string;
-	linkedTermId?: string;
-};
-
 export type PlanAssessment = {
 	insights: PlanInsight[];
 	issueCount: number;
-	recommendations: PlanRecommendation[];
 	topIssueTexts: string[];
 };
 
 const HORIZON_WARNING =
 	"The current horizon ran out of room before every requirement could be placed.";
-const HOURS_IN_SIX_MONTH_WORK_TERM = 26 * 40;
-const currencyFormatter = new Intl.NumberFormat("en-US", {
-	maximumFractionDigits: 0,
-});
 
 type SnapshotBlockGroup = {
-	endLabel: string;
 	endTermId: string;
-	startLabel: string;
 	startTermId: string;
 	type: SpecialBlockType;
 };
@@ -65,18 +52,18 @@ function getLastRelevantTermIndex(snapshot: PlannerSnapshot) {
 	}, -1);
 }
 
-function buildPlannedPlacementMap(snapshot: PlannerSnapshot) {
-	const placements = new Map<string, string>();
+function getGraduationDeltaTerms(
+	baselineSnapshot: PlannerSnapshot,
+	snapshot: PlannerSnapshot,
+) {
+	const baselineTermId = getProjectedGraduationTermId(baselineSnapshot);
+	const currentTermId = getProjectedGraduationTermId(snapshot);
 
-	for (const term of snapshot.terms) {
-		for (const course of term.courses) {
-			if (course.status === "planned") {
-				placements.set(course.id, term.term.id);
-			}
-		}
+	if (!baselineTermId || !currentTermId) {
+		return null;
 	}
 
-	return placements;
+	return getTermIndex(currentTermId) - getTermIndex(baselineTermId);
 }
 
 function buildSnapshotBlockGroups(snapshot: PlannerSnapshot) {
@@ -99,15 +86,12 @@ function buildSnapshotBlockGroups(snapshot: PlannerSnapshot) {
 			currentGroup.type === term.specialBlock &&
 			currentIndex === previousIndex + 1
 		) {
-			currentGroup.endLabel = term.term.label;
 			currentGroup.endTermId = term.term.id;
 			continue;
 		}
 
 		currentGroup = {
-			endLabel: term.term.label,
 			endTermId: term.term.id,
-			startLabel: term.term.label,
 			startTermId: term.term.id,
 			type: term.specialBlock,
 		};
@@ -117,167 +101,128 @@ function buildSnapshotBlockGroups(snapshot: PlannerSnapshot) {
 	return groups;
 }
 
-function formatTermSpan(startLabel: string, endLabel: string) {
-	return startLabel === endLabel
-		? startLabel
-		: `${startLabel} through ${endLabel}`;
+function hasExperientialBlock(snapshot: PlannerSnapshot) {
+	return buildSnapshotBlockGroups(snapshot).some(
+		(group) =>
+			group.type === "work-term" || group.type === "internship",
+	);
 }
 
-function describeBlockType(type: SpecialBlockType) {
-	if (type === "work-term") return "co-op";
-	if (type === "internship") return "internship";
-	return "time-off block";
-}
-
-function describeGraduationDelta(
-	baselineSnapshot: PlannerSnapshot,
+function buildSummerRecoverySuggestion(
+	profile: StudentProfile,
 	snapshot: PlannerSnapshot,
 ) {
-	const baselineTermId = getProjectedGraduationTermId(baselineSnapshot);
-	const currentTermId = getProjectedGraduationTermId(snapshot);
+	const experientialGroup = buildSnapshotBlockGroups(snapshot).find(
+		(group) =>
+			group.type === "work-term" || group.type === "internship",
+	);
 
-	if (!baselineTermId || !currentTermId) {
-		return "TermShift could not compare this path against the current plan yet.";
+	if (!experientialGroup) {
+		return "Add coursework after the work term to recover time.";
 	}
 
-	const delta = getTermIndex(currentTermId) - getTermIndex(baselineTermId);
+	const endTerm = snapshot.terms.find(
+		(term) => term.term.id === experientialGroup.endTermId,
+	)?.term;
 
-	if (delta === 0) {
-		return "No graduation change from the current plan.";
+	if (!endTerm) {
+		return "Add coursework after the work term to recover time.";
 	}
 
-	if (delta > 0) {
-		return `Graduation moves ${delta} academic term${
-			delta === 1 ? "" : "s"
-		} later than the current plan.`;
-	}
+	if (profile.school === "Northeastern University") {
+		if (endTerm.kind === "fall") {
+			return `Take Summer 1 or Summer 2 ${endTerm.year + 1} courses to graduate a semester earlier.`;
+		}
 
-	return `Graduation moves ${Math.abs(delta)} academic term${
-		delta === -1 ? "" : "s"
-	} earlier than the current plan.`;
-}
+		if (endTerm.kind === "spring") {
+			return `Take Summer 1 or Summer 2 ${endTerm.year} courses to recover time.`;
+		}
 
-function buildScenarioSummary(
-	snapshot: PlannerSnapshot,
-	selectedOpportunity: OpportunitySuggestion | null,
-) {
-	const blockGroups = buildSnapshotBlockGroups(snapshot);
+		if (endTerm.kind === "summer1") {
+			return `Take Summer 2 ${endTerm.year} courses to recover time.`;
+		}
 
-	if (selectedOpportunity) {
-		return `Scenario includes Co-op: ${selectedOpportunity.company} during ${selectedOpportunity.termLabel}.`;
-	}
-
-	if (blockGroups.length === 0) {
-		return "This baseline path does not currently include a dedicated co-op, internship, or time-off term.";
-	}
-
-	const summaries = blockGroups.map((group) => {
-		return `${describeBlockType(group.type)} in ${formatTermSpan(
-			group.startLabel,
-			group.endLabel,
-		)}`;
-	});
-
-	return `Scenario includes ${summaries.join("; ")}.`;
-}
-
-function buildCourseMovementInsight(
-	baselineSnapshot: PlannerSnapshot,
-	snapshot: PlannerSnapshot,
-) {
-	const baselinePlacements = buildPlannedPlacementMap(baselineSnapshot);
-	const scenarioPlacements = buildPlannedPlacementMap(snapshot);
-	const movedLater: string[] = [];
-
-	for (const [courseId, scenarioTermId] of scenarioPlacements) {
-		const baselineTermId = baselinePlacements.get(courseId);
-		if (!baselineTermId) continue;
-
-		if (getTermIndex(scenarioTermId) > getTermIndex(baselineTermId)) {
-			movedLater.push(courseId);
+		if (endTerm.kind === "summer2") {
+			return `Take Spring or Summer 1 ${endTerm.year + 1} courses to recover time.`;
 		}
 	}
 
-	if (movedLater.length === 0) {
-		return "This scenario keeps the remaining modeled coursework on roughly the same sequence as the current plan.";
-	}
-
-	return `This scenario pushes ${movedLater.length} planned course${
-		movedLater.length === 1 ? "" : "s"
-	} later than the current plan.`;
+	return "Add coursework after the work term to recover time.";
 }
 
-function buildWorkTermFitInsights(selectedOpportunity: OpportunitySuggestion) {
-	const insights: PlanInsight[] = [];
-	const earnings = parseEstimatedEarnings(selectedOpportunity.compensation);
+function buildTimelineInsight(
+	profile: StudentProfile,
+	baselineSnapshot: PlannerSnapshot,
+	snapshot: PlannerSnapshot,
+): PlanInsight | null {
+	const delta = getGraduationDeltaTerms(baselineSnapshot, snapshot);
 
-	if (earnings) {
-		insights.push({
-			description: `Estimated earnings are about ${earnings.estimateText} over six months at ${earnings.rateText}.`,
-			id: `earnings-${selectedOpportunity.id}`,
-			title: "Estimated earnings",
+	if (delta === null) {
+		return null;
+	}
+
+	if (delta > 0) {
+		const description = hasExperientialBlock(snapshot)
+			? `Projected graduation pushed to ${snapshot.projectedGraduation}. ${buildSummerRecoverySuggestion(
+					profile,
+					snapshot,
+			  )}`
+			: `Projected graduation pushed to ${snapshot.projectedGraduation}.`;
+
+		return {
+			description,
+			id: "timeline-shift",
+			title: "Timeline",
 			tone: "neutral",
-		});
+		};
 	}
 
-	insights.push({
-		description: `Likely skill exposure includes ${selectedOpportunity.focusAreas.join(
-			", ",
-		)}.`,
-		id: `skills-${selectedOpportunity.id}`,
-		title: "Likely skill exposure",
-		tone: "neutral",
-	});
-
-	if (selectedOpportunity.matchedCourseCodes.length > 0) {
-		insights.push({
-			description: `Your completed or in-progress coursework already aligns with ${selectedOpportunity.matchedCourseCodes.join(
-				", ",
-			)}.`,
-			id: `alignment-${selectedOpportunity.id}`,
-			title: "Coursework alignment",
+	if (delta < 0) {
+		return {
+			description: `Projected graduation pulled up to ${snapshot.projectedGraduation}.`,
+			id: "timeline-shift",
+			title: "Timeline",
 			tone: "neutral",
-		});
+		};
 	}
-
-	if (selectedOpportunity.missingCourseCodes.length > 0) {
-		insights.push({
-			description: `Before this role, TermShift would still want to see ${selectedOpportunity.missingCourseCodes.join(
-				", ",
-			)}.`,
-			id: `readiness-${selectedOpportunity.id}`,
-			title: "Readiness gaps",
-			tone: "warning",
-		});
-	}
-
-	return insights;
-}
-
-function parseEstimatedEarnings(compensation?: string) {
-	if (!compensation) return null;
-
-	const match = compensation.match(
-		/\$(\d+(?:\.\d+)?)(?:\s*-\s*\$?(\d+(?:\.\d+)?))?\s*\/?\s*(?:hr|hour)/i,
-	);
-
-	if (!match) return null;
-
-	const low = Number(match[1]);
-	const high = Number(match[2] ?? match[1]);
-	const average = (low + high) / 2;
-	const estimate = average * HOURS_IN_SIX_MONTH_WORK_TERM;
 
 	return {
-		estimateText: `$${currencyFormatter.format(
-			Math.round(estimate / 100) * 100,
-		)}`,
-		rateText:
-			low === high
-				? `$${currencyFormatter.format(low)}/hr`
-				: `$${currencyFormatter.format(low)}-$${currencyFormatter.format(
-						high,
-				  )}/hr`,
+		description: `Projected graduation stays at ${snapshot.projectedGraduation}.`,
+		id: "timeline-shift",
+		title: "Timeline",
+		tone: "neutral",
+	};
+}
+
+function buildWritingWindowInsight(
+	profile: StudentProfile,
+	snapshot: PlannerSnapshot,
+): PlanInsight | null {
+	if (profile.school !== "Northeastern University") {
+		return null;
+	}
+
+	if (!hasExperientialBlock(snapshot)) {
+		return null;
+	}
+
+	const engwTerm = snapshot.terms.find((term) =>
+		term.courses.some(
+			(course) => course.id === "engw3302" && course.status === "planned",
+		),
+	);
+
+	if (!engwTerm || engwTerm.specialBlock) {
+		return null;
+	}
+
+	return {
+		description:
+			"Many Northeastern students take ENGW 3302 online during co-op. Consider moving it into that window.",
+		id: "engw-online-option",
+		linkedTermId: engwTerm.term.id,
+		title: "Writing option",
+		tone: "neutral",
 	};
 }
 
@@ -289,7 +234,6 @@ function buildIssueInsights(profile: StudentProfile, snapshot: PlannerSnapshot) 
 	for (const term of snapshot.terms) {
 		const termIndex = getTermIndex(term.term.id);
 		const standardLoad = getStandardCourseLoad(term.term.id);
-		const offeringConflicts: string[] = [];
 		const prereqConflicts: string[] = [];
 
 		for (const course of term.courses) {
@@ -300,39 +244,24 @@ function buildIssueInsights(profile: StudentProfile, snapshot: PlannerSnapshot) 
 						"",
 					);
 					prereqConflicts.push(
-						`${course.code} before ${prereqCode.replace(/\.$/, "")}`,
+						`${course.code} comes before ${prereqCode.replace(
+							/\.$/,
+							"",
+						)}`,
 					);
-				}
-
-				if (conflict === "Modeled as not normally offered in this term.") {
-					offeringConflicts.push(course.code);
 				}
 			}
 		}
 
 		if (prereqConflicts.length > 0) {
 			issues.push({
-				description: `${term.term.label} has prerequisite sequencing issues: ${prereqConflicts.join(
+				description: `${prereqConflicts.join(
 					"; ",
-				)}.`,
+				)}. Move it later in the plan.`,
 				id: `prereq-${term.term.id}`,
 				linkedTermId: term.term.id,
-				title: "Prerequisite order issue",
+				title: "Prerequisite order",
 				tone: "critical",
-			});
-		}
-
-		if (offeringConflicts.length > 0) {
-			issues.push({
-				description: `${offeringConflicts.join(
-					", ",
-				)} ${
-					offeringConflicts.length === 1 ? "is" : "are"
-				} not typically offered in ${term.term.label}.`,
-				id: `offering-${term.term.id}`,
-				linkedTermId: term.term.id,
-				title: "Term offering mismatch",
-				tone: "warning",
 			});
 		}
 
@@ -342,7 +271,7 @@ function buildIssueInsights(profile: StudentProfile, snapshot: PlannerSnapshot) 
 
 		if (!term.specialBlock && term.courses.length > standardLoad) {
 			issues.push({
-				description: `${term.term.label} carries ${term.courses.length} planned courses. This model expects ${standardLoad}.`,
+				description: `${term.term.label} has ${term.courses.length} planned courses. Move one course out.`,
 				id: `overload-${term.term.id}`,
 				linkedTermId: term.term.id,
 				title: "Overloaded term",
@@ -355,10 +284,10 @@ function buildIssueInsights(profile: StudentProfile, snapshot: PlannerSnapshot) 
 			term.courses.length > 1
 		) {
 			issues.push({
-				description: `${term.term.label} pairs an internship block with ${term.courses.length} courses. This is likely too heavy for a working term.`,
+				description: `${term.term.label} pairs an internship with ${term.courses.length} courses. Reduce coursework in that term.`,
 				id: `internship-load-${term.term.id}`,
 				linkedTermId: term.term.id,
-				title: "Internship load warning",
+				title: "Internship load",
 				tone: "critical",
 			});
 		}
@@ -366,13 +295,15 @@ function buildIssueInsights(profile: StudentProfile, snapshot: PlannerSnapshot) 
 		if (
 			!term.specialBlock &&
 			term.term.id !== projectedGraduationTermId &&
+			term.term.kind !== "summer1" &&
+			term.term.kind !== "summer2" &&
 			term.courses.length < standardLoad
 		) {
 			issues.push({
 				description:
 					profile.school === "Northeastern University"
-						? `${term.term.label} is underloaded at ${term.courses.length} of ${standardLoad} courses. At Northeastern, reduced load can affect full-time billing, scholarships, or aid eligibility.`
-						: `${term.term.label} is underloaded at ${term.courses.length} of ${standardLoad} courses. Verify whether a reduced load is acceptable for your program and aid status.`,
+						? `${term.term.label} is underloaded at ${term.courses.length} of ${standardLoad} courses. Reduced load can affect billing or aid.`
+						: `${term.term.label} is underloaded at ${term.courses.length} of ${standardLoad} courses. Verify whether reduced load is acceptable.`,
 				id: `underload-${term.term.id}`,
 				linkedTermId: term.term.id,
 				title: "Underloaded term",
@@ -386,118 +317,12 @@ function buildIssueInsights(profile: StudentProfile, snapshot: PlannerSnapshot) 
 			description:
 				"TermShift ran out of modeled room before every requirement could be placed.",
 			id: "horizon-limit",
-			title: "Modeled horizon limit",
+			title: "Planning horizon",
 			tone: "critical",
 		});
 	}
 
 	return issues;
-}
-
-function buildRecommendations(
-	profile: StudentProfile,
-	snapshot: PlannerSnapshot,
-	issues: PlanInsight[],
-	baselineSnapshot: PlannerSnapshot,
-	selectedOpportunity: OpportunitySuggestion | null,
-	experimentMode: boolean,
-) {
-	const recommendations: PlanRecommendation[] = [];
-	const blocks = buildSnapshotBlockGroups(snapshot);
-	const hasExperientialBlock = blocks.some(
-		(block) => block.type === "work-term" || block.type === "internship",
-	);
-	const projectedDelta = describeGraduationDelta(baselineSnapshot, snapshot);
-
-	const prereqIssue = issues.find((issue) => issue.id.startsWith("prereq-"));
-	if (prereqIssue) {
-		recommendations.push({
-			description:
-				"Move the affected course after its prerequisite is completed, then rerun the scenario.",
-			id: "fix-prereq-order",
-			linkedTermId: prereqIssue.linkedTermId,
-		});
-	}
-
-	const offeringIssue = issues.find((issue) =>
-		issue.id.startsWith("offering-"),
-	);
-	if (offeringIssue) {
-		recommendations.push({
-			description:
-				"Shift the flagged course into a term where it is normally offered to avoid a fragile plan.",
-			id: "fix-offering-mismatch",
-			linkedTermId: offeringIssue.linkedTermId,
-		});
-	}
-
-	const overloadIssue = issues.find(
-		(issue) =>
-			issue.id.startsWith("overload-") ||
-			issue.id.startsWith("internship-load-"),
-	);
-	if (overloadIssue) {
-		recommendations.push({
-			description:
-				"Move one planned course out of the overloaded term or reduce coursework during the work experience window.",
-			id: "fix-overload",
-			linkedTermId: overloadIssue.linkedTermId,
-		});
-	}
-
-	const underloadIssue = issues.find((issue) =>
-		issue.id.startsWith("underload-"),
-	);
-	if (underloadIssue) {
-		recommendations.push({
-			description:
-				profile.school === "Northeastern University"
-					? "If you keep this reduced load, verify full-time billing and aid implications with Northeastern Student Financial Services."
-					: "If you keep this reduced load, verify program and aid implications before finalizing the plan.",
-			id: "check-underload",
-			linkedTermId: underloadIssue.linkedTermId,
-		});
-	}
-
-	if (!hasExperientialBlock && !experimentMode) {
-		recommendations.push({
-			description:
-				"Test a July-December or January-June co-op scenario to compare experience gained against time-to-graduation.",
-			id: "try-work-term-scenario",
-		});
-	}
-
-	if (selectedOpportunity?.missingCourseCodes.length) {
-		recommendations.push({
-			description: `Before targeting this listing, prioritize ${selectedOpportunity.missingCourseCodes.join(
-				", ",
-			)}.`,
-			id: "close-readiness-gaps",
-		});
-	}
-
-	if (
-		experimentMode &&
-		hasExperientialBlock &&
-		projectedDelta !== "No graduation change from the current plan."
-	) {
-		recommendations.push({
-			description:
-				"If minimizing graduation delay matters more than this work term, compare a later co-op window or a shorter internship scenario.",
-			id: "compare-graduation-tradeoff",
-		});
-	}
-
-	if (recommendations.length === 0) {
-		recommendations.push({
-			description: experimentMode
-				? "This scenario is clean enough to save and compare against other work-term options."
-				: "You are in a stable modeled path. Use experiment mode when you want to test co-op or internship tradeoffs.",
-			id: "stable-path",
-		});
-	}
-
-	return recommendations;
 }
 
 export function buildPlanAssessment({
@@ -513,80 +338,80 @@ export function buildPlanAssessment({
 	selectedOpportunity?: OpportunitySuggestion | null;
 	snapshot: PlannerSnapshot;
 }): PlanAssessment {
-	const insights: PlanInsight[] = [
-		{
-			description: experimentMode
-				? `This scenario currently lands at ${snapshot.projectedGraduation}.`
-				: `Your current modeled path lands at ${snapshot.projectedGraduation}.`,
-			id: "graduation",
-			title: "Projected graduation",
-			tone: "neutral",
-		},
-		{
-			description: describeGraduationDelta(baselineSnapshot, snapshot),
-			id: "graduation-delta",
-			title: "Change vs current plan",
-			tone: "neutral",
-		},
-		{
-			description: buildScenarioSummary(
-				snapshot,
-				experimentMode ? selectedOpportunity ?? null : null,
-			),
-			id: "scenario-summary",
-			title: "Scenario includes",
-			tone: "neutral",
-		},
-		{
-			description: buildCourseMovementInsight(
-				baselineSnapshot,
-				snapshot,
-			),
-			id: "academic-impact",
-			title: "Academic impact",
-			tone: "neutral",
-		},
-	];
-
-	if (!snapshot.warnings.includes(HORIZON_WARNING)) {
-		insights.push({
-			description:
-				"This path still completes all modeled requirements inside the current planning horizon.",
-			id: "completion-status",
-			title: "Modeled completion",
-			tone: "neutral",
-		});
-	}
-
-	if (experimentMode && selectedOpportunity) {
-		insights.push(...buildWorkTermFitInsights(selectedOpportunity));
-	}
-
 	const issueInsights = buildIssueInsights(profile, snapshot);
 
-	if (!experimentMode && issueInsights.length === 0) {
+	if (!experimentMode) {
+		if (issueInsights.length > 0) {
+			return {
+				insights: issueInsights,
+				issueCount: issueInsights.length,
+				topIssueTexts: issueInsights
+					.slice(0, 3)
+					.map((issue) => issue.description),
+			};
+		}
+
+		return {
+			insights: [
+				{
+					description: `You are on track academically under the current model. Projected graduation in ${snapshot.projectedGraduation}.`,
+					id: "status",
+					title: "Status",
+					tone: "neutral",
+				},
+			],
+			issueCount: 0,
+			topIssueTexts: [],
+		};
+	}
+
+	const insights: PlanInsight[] = [];
+	const timelineInsight = buildTimelineInsight(
+		profile,
+		baselineSnapshot,
+		snapshot,
+	);
+
+	if (timelineInsight) {
+		insights.push(timelineInsight);
+	}
+
+	const writingWindowInsight = buildWritingWindowInsight(profile, snapshot);
+	if (writingWindowInsight) {
+		insights.push(writingWindowInsight);
+	}
+
+	if (
+		selectedOpportunity &&
+		issueInsights.length === 0 &&
+		hasExperientialBlock(snapshot)
+	) {
 		insights.push({
-			description:
-				"You are on track academically under the current model.",
-			id: "on-track",
-			title: "Modeled status",
+			description: `Scenario includes ${
+				selectedOpportunity.blockType === "internship"
+					? "internship"
+					: "co-op"
+			} at ${selectedOpportunity.company}.`,
+			id: "work-term-summary",
+			title: "Scenario",
 			tone: "neutral",
 		});
 	}
 
 	insights.push(...issueInsights);
 
+	if (insights.length === 0) {
+		insights.push({
+			description: `Projected graduation stays at ${snapshot.projectedGraduation}. This scenario remains on track under the current model.`,
+			id: "experimental-status",
+			title: "Status",
+			tone: "neutral",
+		});
+	}
+
 	return {
 		insights,
 		issueCount: issueInsights.length,
-		recommendations: buildRecommendations(
-			profile,
-			snapshot,
-			issueInsights,
-			baselineSnapshot,
-			experimentMode ? selectedOpportunity ?? null : null,
-			experimentMode,
-		),
 		topIssueTexts: issueInsights.slice(0, 3).map((issue) => issue.description),
 	};
 }
