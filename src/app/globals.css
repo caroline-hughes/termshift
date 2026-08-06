@@ -69,7 +69,7 @@ a {
 
 .landing-content {
 	max-width: 74rem;
-	padding: 1.35rem 2rem 2rem;
+	padding: clamp(2.6rem, 7vh, 4.5rem) 2rem 2rem;
 }
 
 .pathwise-shell[data-nav-collapsed="true"] {
