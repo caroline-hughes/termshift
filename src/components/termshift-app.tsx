@@ -20,6 +20,10 @@ import {
 } from "@/lib/pathwise-data";
 import { derivePlannerSnapshot } from "@/lib/pathwise-planner";
 import {
+	buildPlanAssessment,
+	type PlanInsight,
+} from "@/lib/termshift-plan-assessment";
+import {
 	buildOpportunitySuggestions,
 	type OpportunitySuggestion,
 } from "@/lib/termshift-opportunities";
@@ -98,19 +102,19 @@ type PersistedSession = {
 };
 
 type OpportunityPreview = OpportunitySuggestion & {
+	issueCount: number;
 	projectedGraduation: string;
-	signalCount: number;
-	topSignals: string[];
+	topIssues: string[];
 };
 
 type SavedScenario = {
 	id: string;
+	issueCount: number;
 	opportunityId: string | null;
 	plannerState: PlannerState;
 	projectedGraduation: string;
-	signalCount: number;
 	title: string;
-	topSignals: string[];
+	topIssues: string[];
 	updatedAt: string;
 };
 
@@ -123,6 +127,12 @@ type SaveScenarioModalState = {
 	isOpen: boolean;
 	value: string;
 };
+
+type RailSectionKey =
+	| "blocks"
+	| "insights"
+	| "recommendations"
+	| "savedScenarios";
 
 const APP_STORAGE_KEY = "termshift-session-v1";
 
@@ -485,6 +495,26 @@ function buildBlockLabels(blockGroups: Map<string, BlockGroup>) {
 	return labels;
 }
 
+function buildTermIssueMap(insights: PlanInsight[]) {
+	const issuesByTerm = new Map<string, PlanInsight[]>();
+
+	for (const insight of insights) {
+		if (!insight.linkedTermId || insight.tone === "neutral") continue;
+
+		const existing = issuesByTerm.get(insight.linkedTermId) ?? [];
+		existing.push(insight);
+		issuesByTerm.set(insight.linkedTermId, existing);
+	}
+
+	return issuesByTerm;
+}
+
+function getIssueToneClass(tone: PlanInsight["tone"]) {
+	if (tone === "critical") return "is-critical";
+	if (tone === "warning") return "is-warning";
+	return "is-neutral";
+}
+
 function buildDemoProfile(
 	fileName: string,
 	profileKey: DemoProfileKey = "sophomore",
@@ -610,6 +640,9 @@ export function TermShiftApp() {
 	const [activeView, setActiveView] = useState<ActiveView>("profile");
 	const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 	const [draggingTermId, setDraggingTermId] = useState<string | null>(null);
+	const [highlightedInsightId, setHighlightedInsightId] = useState<
+		string | null
+	>(null);
 	const [blockContextMenu, setBlockContextMenu] =
 		useState<BlockContextMenu>(null);
 	const [identity, setIdentity] = useState<IdentityState>(
@@ -647,6 +680,14 @@ export function TermShiftApp() {
 			isOpen: false,
 			value: "",
 		});
+	const [collapsedRailSections, setCollapsedRailSections] = useState<
+		Record<RailSectionKey, boolean>
+	>({
+		blocks: false,
+		insights: false,
+		recommendations: false,
+		savedScenarios: true,
+	});
 	const [uploadedDocumentUrl, setUploadedDocumentUrl] = useState<
 		string | null
 	>(null);
@@ -655,6 +696,9 @@ export function TermShiftApp() {
 	>(null);
 	const [pendingUpload, setPendingUpload] = useState<File | null>(null);
 	const [didHydrate, setDidHydrate] = useState(false);
+	const insightItemRefs = useRef<Map<string, HTMLLIElement | null>>(
+		new Map(),
+	);
 	const uploadedDocumentUrlRef = useRef<string | null>(null);
 	const profileHighlightTimeoutRef = useRef<number | null>(null);
 	const processingRunRef = useRef(0);
@@ -713,7 +757,23 @@ export function TermShiftApp() {
 				setSavedScenarios(
 					(parsed.savedScenarios ?? []).map((scenario) => ({
 						...scenario,
+						issueCount:
+							scenario.issueCount ??
+							(
+								scenario as SavedScenario & {
+									signalCount?: number;
+								}
+							).signalCount ??
+							0,
 						plannerState: clonePlannerState(scenario.plannerState),
+						topIssues:
+							scenario.topIssues ??
+							(
+								scenario as SavedScenario & {
+									topSignals?: string[];
+								}
+							).topSignals ??
+							[],
 					})),
 				);
 				setActiveScenarioId(parsed.activeScenarioId ?? null);
@@ -832,13 +892,20 @@ export function TermShiftApp() {
 						profile,
 						scenarioState,
 					);
+					const scenarioAssessment = buildPlanAssessment({
+						baselineSnapshot: savedSnapshot,
+						experimentMode: true,
+						profile,
+						selectedOpportunity: opportunity,
+						snapshot: scenarioSnapshot,
+					});
 
 					return {
 						...opportunity,
+						issueCount: scenarioAssessment.issueCount,
 						projectedGraduation:
 							scenarioSnapshot.projectedGraduation,
-						signalCount: scenarioSnapshot.warnings.length,
-						topSignals: scenarioSnapshot.warnings.slice(0, 3),
+						topIssues: scenarioAssessment.topIssueTexts,
 					};
 			  })
 			: [];
@@ -874,6 +941,21 @@ export function TermShiftApp() {
 		identity.fullName.trim().length > 0 &&
 		Boolean(identity.school) &&
 		Boolean(identity.major);
+	const planAssessment =
+		profile && snapshot && savedSnapshot
+			? buildPlanAssessment({
+					baselineSnapshot: savedSnapshot,
+					experimentMode,
+					profile,
+					selectedOpportunity: experimentMode
+						? selectedOpportunity
+						: null,
+					snapshot,
+			  })
+			: null;
+	const termIssueMap = planAssessment
+		? buildTermIssueMap(planAssessment.insights)
+		: new Map<string, PlanInsight[]>();
 
 	function isFutureTerm(termId: string) {
 		return profile ? getTermIndex(termId) > lockedThroughIndex : false;
@@ -1154,19 +1236,19 @@ export function TermShiftApp() {
 	}
 
 	function saveScenario() {
-		if (!snapshot) return;
+		if (!snapshot || !planAssessment) return;
 
 		const scenarioTitle =
 			saveScenarioModal.value.trim() || saveScenarioModal.defaultTitle;
 
 		const nextScenario: SavedScenario = {
 			id: activeSavedScenario?.id ?? createScenarioId(),
+			issueCount: planAssessment.issueCount,
 			opportunityId: selectedOpportunityId,
 			plannerState: clonePlannerState(plannerState),
 			projectedGraduation: snapshot.projectedGraduation,
-			signalCount: snapshot.warnings.length,
 			title: scenarioTitle,
-			topSignals: snapshot.warnings.slice(0, 2),
+			topIssues: planAssessment.topIssueTexts.slice(0, 2),
 			updatedAt: new Date().toISOString(),
 		};
 
@@ -1572,6 +1654,56 @@ export function TermShiftApp() {
 				<h1 className="screen-title">{title}</h1>
 			</div>
 		);
+	}
+
+	function toggleRailSection(section: RailSectionKey) {
+		setCollapsedRailSections((current) => ({
+			...current,
+			[section]: !current[section],
+		}));
+	}
+
+	function highlightAndScrollInsight(insightId: string) {
+		setHighlightedInsightId(insightId);
+		insightItemRefs.current
+			.get(insightId)
+			?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+	}
+
+	function renderTermIssueDots(termId: string) {
+		const linkedIssues = termIssueMap.get(termId) ?? [];
+
+		if (linkedIssues.length === 0) return null;
+
+		return (
+			<div className="term-issue-row">
+				{linkedIssues.map((issue) => (
+					<button
+						key={issue.id}
+						type="button"
+						aria-label={issue.title}
+						className={`term-issue-dot ${getIssueToneClass(
+							issue.tone,
+						)} ${
+							highlightedInsightId === issue.id
+								? "is-highlighted"
+								: ""
+						}`}
+						onMouseEnter={() => highlightAndScrollInsight(issue.id)}
+						onMouseLeave={() => setHighlightedInsightId(null)}
+						onFocus={() => highlightAndScrollInsight(issue.id)}
+						onBlur={() => setHighlightedInsightId(null)}
+						title={`${issue.title}: ${issue.description}`}
+					/>
+				))}
+			</div>
+		);
+	}
+
+	function renderTermStateBadge(termId: string) {
+		if (!profile || termId !== profile.lockedThroughTermId) return null;
+
+		return <span className="term-state-badge">Current</span>;
 	}
 
 	function renderCourse(course: ScheduledCourse, termId: string) {
@@ -2067,7 +2199,7 @@ export function TermShiftApp() {
 		}
 
 		return (
-			<section className="pathwise-screen">
+			<section className="pathwise-screen pathwise-screen--plan">
 				<header className="screen-header">
 					{renderScreenTitle("Profile")}
 					{/* <p className="screen-intro">
@@ -2089,7 +2221,7 @@ export function TermShiftApp() {
 						<span className="profile-value">{identity.school}</span>
 					</p>
 					<p>
-						<span className="profile-label">Program Model</span>
+						<span className="profile-label">Program</span>
 						<span className="profile-value">{profile.program}</span>
 						<a
 							href={REQUIREMENTS_URL}
@@ -2108,7 +2240,9 @@ export function TermShiftApp() {
 								: ""
 						}`}
 					>
-						<span className="profile-label">Upload</span>
+						<span className="profile-label">
+							Upload (Transcript / Degree Audit)
+						</span>
 						<span className="profile-value">
 							{uploadedDocumentUrl ? (
 								<a
@@ -2125,7 +2259,7 @@ export function TermShiftApp() {
 						</span>
 						<div className="profile-actions-row profile-actions-row--stacked">
 							<label className="plan-action-button upload-button">
-								Replace upload
+								Replace
 								<input
 									type="file"
 									accept=".pdf,.txt"
@@ -2160,7 +2294,7 @@ export function TermShiftApp() {
 		if (!profile || !snapshot || !savedSnapshot) return null;
 
 		return (
-			<section className="pathwise-screen">
+			<section className="pathwise-screen pathwise-screen--search">
 				<header className="screen-header">
 					<div className="path-plan-topline">
 						{renderScreenTitle("Degree Path")}
@@ -2288,12 +2422,27 @@ export function TermShiftApp() {
 									{TERM_ORDER.map((kind) => {
 										const derivedTerm = row.terms[kind];
 										const termId = derivedTerm?.term.id;
+										const isCurrentTerm =
+											termId ===
+											profile?.lockedThroughTermId;
 										const canDrop = termId
 											? canInteractWithTerm(termId)
 											: false;
 										const isDropTarget =
 											termId !== undefined &&
 											draggingTermId === termId;
+										const isLinkedIssueHighlighted =
+											termId !== undefined
+												? (
+														termIssueMap.get(
+															termId,
+														) ?? []
+												  ).some(
+														(issue) =>
+															issue.id ===
+															highlightedInsightId,
+												  )
+												: false;
 
 										return (
 											<div
@@ -2303,8 +2452,16 @@ export function TermShiftApp() {
 														? "is-future"
 														: "is-past"
 												} ${
+													isCurrentTerm
+														? "is-current-term"
+														: ""
+												} ${
 													isDropTarget
 														? "is-drop-target"
+														: ""
+												} ${
+													isLinkedIssueHighlighted
+														? "is-linked-issue"
 														: ""
 												}`}
 												onDragOver={(event) => {
@@ -2327,6 +2484,16 @@ export function TermShiftApp() {
 												}}
 											>
 												{termId
+													? renderTermStateBadge(
+															termId,
+													  )
+													: null}
+												{termId
+													? renderTermIssueDots(
+															termId,
+													  )
+													: null}
+												{termId
 													? renderPlacedBlock(termId)
 													: null}
 												{derivedTerm?.courses.map(
@@ -2346,64 +2513,187 @@ export function TermShiftApp() {
 
 					<aside className="path-plan-blocks">
 						<div className="rail-section">
-							<p className="block-label">
-								{experimentMode ? "Blocks" : "Experiment"}
-							</p>
-							{experimentMode ? (
-								<div className="block-list">
-									{renderPaletteBlock("work-term")}
-									{renderPaletteBlock("internship")}
-									{renderPaletteBlock("time-off")}
-								</div>
-							) : (
-								<div className="rail-copy-group">
-									<p className="rail-copy">
-										Turn on experiment mode to drag co-op,
-										internship, or time-off blocks into
-										future terms.
-									</p>
-									<button
-										type="button"
-										className="plan-action-button plan-action-button--primary"
-										onClick={() => setExperimentMode(true)}
-									>
-										Enter experiment mode
-									</button>
-								</div>
+							<button
+								type="button"
+								className="rail-section-toggle"
+								onClick={() => toggleRailSection("blocks")}
+								aria-expanded={!collapsedRailSections.blocks}
+							>
+								<span className="block-label">Blocks</span>
+								<span
+									className="rail-section-caret"
+									aria-hidden="true"
+								>
+									{collapsedRailSections.blocks ? "+" : "−"}
+								</span>
+							</button>
+							{collapsedRailSections.blocks ? null : (
+								<>
+									<div className="block-list">
+										{renderPaletteBlock("work-term")}
+										{renderPaletteBlock("internship")}
+										{renderPaletteBlock("time-off")}
+									</div>
+									{experimentMode ? null : (
+										<p className="rail-copy">
+											Switch to Experiment above to place
+											these blocks into future terms.
+										</p>
+									)}
+								</>
 							)}
 						</div>
 
 						<div className="rail-section rail-section--divided">
-							<p className="block-label">Plan Signals</p>
-							{snapshot.warnings.length > 0 ? (
-								<ul className="signal-list">
-									{snapshot.warnings
-										.slice(0, 6)
-										.map((warning) => (
-											<li
-												key={warning}
-												className="signal-item"
-											>
-												{warning}
-											</li>
-										))}
-								</ul>
+							<button
+								type="button"
+								className="rail-section-toggle"
+								onClick={() => toggleRailSection("insights")}
+								aria-expanded={!collapsedRailSections.insights}
+							>
+								<span className="block-label">
+									Plan Insights
+								</span>
+								<span
+									className="rail-section-caret"
+									aria-hidden="true"
+								>
+									{collapsedRailSections.insights ? "+" : "−"}
+								</span>
+							</button>
+							{planAssessment ? (
+								<div
+									className={`insight-scroll ${
+										collapsedRailSections.insights
+											? "is-collapsed"
+											: ""
+									}`}
+								>
+									<ul className="insight-list">
+										{planAssessment.insights.map(
+											(insight) => (
+												<li
+													key={insight.id}
+													ref={(node) => {
+														insightItemRefs.current.set(
+															insight.id,
+															node,
+														);
+													}}
+													className={`insight-item ${getIssueToneClass(
+														insight.tone,
+													)} ${
+														highlightedInsightId ===
+														insight.id
+															? "is-highlighted"
+															: ""
+													}`}
+													onMouseEnter={() =>
+														setHighlightedInsightId(
+															insight.id,
+														)
+													}
+													onMouseLeave={() =>
+														setHighlightedInsightId(
+															null,
+														)
+													}
+												>
+													<span className="insight-dot" />
+													<div className="insight-copy">
+														<strong className="insight-title">
+															{insight.title}
+														</strong>
+														<p className="insight-description">
+															{
+																insight.description
+															}
+														</p>
+													</div>
+												</li>
+											),
+										)}
+									</ul>
+								</div>
 							) : (
-								<p className="rail-copy">
-									No modeled scheduling issues in the current
-									scenario.
+								<p
+									className={`rail-copy ${
+										collapsedRailSections.insights
+											? "is-collapsed"
+											: ""
+									}`}
+								>
+									TermShift is still building this path
+									assessment.
 								</p>
 							)}
 						</div>
 
 						<div className="rail-section rail-section--divided">
-							<div className="saved-scenario-header">
-								<p className="block-label">Saved Scenarios</p>
-								<span className="saved-scenario-count">
-									{savedScenarios.length}
+							<button
+								type="button"
+								className="rail-section-toggle"
+								onClick={() =>
+									toggleRailSection("recommendations")
+								}
+								aria-expanded={
+									!collapsedRailSections.recommendations
+								}
+							>
+								<span className="block-label">
+									Recommendations
 								</span>
-							</div>
-							{savedScenarios.length > 0 ? (
+								<span
+									className="rail-section-caret"
+									aria-hidden="true"
+								>
+									{collapsedRailSections.recommendations
+										? "+"
+										: "−"}
+								</span>
+							</button>
+							{planAssessment &&
+							!collapsedRailSections.recommendations ? (
+								<ul className="recommendation-list">
+									{planAssessment.recommendations.map(
+										(recommendation) => (
+											<li
+												key={recommendation.id}
+												className="recommendation-item"
+											>
+												{recommendation.description}
+											</li>
+										),
+									)}
+								</ul>
+							) : null}
+						</div>
+
+						<div className="rail-section rail-section--divided">
+							<button
+								type="button"
+								className="rail-section-toggle"
+								onClick={() =>
+									toggleRailSection("savedScenarios")
+								}
+								aria-expanded={
+									!collapsedRailSections.savedScenarios
+								}
+							>
+								<span className="block-label">
+									Saved Scenarios ({savedScenarios.length})
+								</span>
+								<span
+									className="rail-section-caret"
+									aria-hidden="true"
+								>
+									{collapsedRailSections.savedScenarios
+										? "+"
+										: "−"}
+								</span>
+							</button>
+							{collapsedRailSections.savedScenarios ? null : savedScenarios.length >
+							  0 ? (
 								<ul className="saved-scenario-list">
 									{savedScenarios.map((scenario) => (
 										<li
@@ -2433,10 +2723,10 @@ export function TermShiftApp() {
 													}
 												</span>
 												<span className="saved-scenario-meta">
-													{scenario.signalCount}{" "}
-													{scenario.signalCount === 1
-														? "signal"
-														: "signals"}
+													{scenario.issueCount}{" "}
+													{scenario.issueCount === 1
+														? "issue"
+														: "issues"}
 												</span>
 											</button>
 											<button
@@ -2579,7 +2869,7 @@ export function TermShiftApp() {
 		if (!profile || !savedSnapshot) return null;
 
 		return (
-			<section className="pathwise-screen">
+			<section className="pathwise-screen pathwise-screen--search">
 				<header className="screen-header">
 					{renderScreenTitle("Work Term Search")}
 					<p className="screen-intro">
@@ -2709,15 +2999,15 @@ export function TermShiftApp() {
 									}
 									.
 								</p>
-								{activeSearchOpportunity.signalCount > 0 ? (
+								{activeSearchOpportunity.issueCount > 0 ? (
 									<ul className="signal-list">
-										{activeSearchOpportunity.topSignals.map(
-											(signal) => (
+										{activeSearchOpportunity.topIssues.map(
+											(issue) => (
 												<li
-													key={signal}
+													key={issue}
 													className="signal-item"
 												>
-													{signal}
+													{issue}
 												</li>
 											),
 										)}
@@ -2850,6 +3140,16 @@ export function TermShiftApp() {
 			</aside>
 
 			<div className="pathwise-content">
+				{sidebarCollapsed ? (
+					<button
+						type="button"
+						className="pathwise-sidebar-reopen"
+						aria-label="Show sidebar"
+						onClick={() => setSidebarCollapsed(false)}
+					>
+						→
+					</button>
+				) : null}
 				{activeView === "profile" ? renderProfileScreen() : null}
 				{activeView === "plan" ? renderPathPlan() : null}
 				{activeView === "search" ? renderSearch() : null}

@@ -31,11 +31,13 @@ function compareCourseOrder(left: CourseRequirement, right: CourseRequirement) {
 function getBaseCapacity(term: AcademicTerm, block?: SpecialBlockType) {
   const normalCapacity = getNormalCapacity(term);
   if (block === "work-term" || block === "time-off") return 0;
-  if (block === "internship") return Math.max(1, Math.floor(normalCapacity / 2));
+  if (block === "internship") return 1;
   return normalCapacity;
 }
 
 function getHardCapacity(term: AcademicTerm, block?: SpecialBlockType) {
+  if (block === "work-term") return 1;
+  if (block === "internship") return 2;
   const baseCapacity = getBaseCapacity(term, block);
   if (baseCapacity === 0) return 0;
   return baseCapacity + 1;
