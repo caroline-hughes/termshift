@@ -86,7 +86,7 @@ a {
 }
 
 .pathwise-sidebar {
-	padding: 1.5rem 0 1rem 1rem;
+	padding: 1.5rem 0 1.25rem 1.25rem;
 	display: flex;
 	flex-direction: column;
 	gap: 2rem;
@@ -110,6 +110,7 @@ a {
 	display: flex;
 	flex-direction: column;
 	gap: 1rem;
+	padding-bottom: 1rem;
 }
 
 .pathwise-shell[data-nav-collapsed="true"] .pathwise-sidebar {
@@ -128,7 +129,7 @@ a {
 .pathwise-sidebar-reopen {
 	position: fixed;
 	left: 1rem;
-	bottom: 1rem;
+	bottom: 3.5rem;
 	z-index: 65;
 	width: 2.25rem;
 	height: 2.25rem;
@@ -201,10 +202,9 @@ a {
 }
 
 .pathwise-content {
-	padding: 1rem 1.25rem;
+	padding: 1.5rem 1.25rem;
 	height: 100vh;
 	min-height: 0;
-	overflow-y: auto;
 }
 
 .pathwise-screen {
@@ -414,7 +414,7 @@ a {
 
 .screen-header {
 	border-bottom: 2px dashed var(--slate-grey);
-	padding-bottom: 1.5rem;
+	padding-bottom: 1rem;
 	flex: 0 0 auto;
 }
 
@@ -685,7 +685,6 @@ a {
 
 .screen-intro {
 	max-width: 42rem;
-	margin: 0.85rem 0 0;
 	color: var(--slate-grey);
 	font-size: 1rem;
 	line-height: 1.6;
@@ -717,7 +716,7 @@ a {
 	justify-content: space-between;
 	gap: 1rem;
 	margin-top: 0.6rem;
-	padding-top: 0.65rem;
+	padding-top: 1.5rem;
 }
 
 .path-plan-subline-copy {
@@ -1192,10 +1191,11 @@ a {
 .block-label,
 .summary-label,
 .profile-label {
-	color: var(--slate-grey);
-	font-size: 0.82rem;
+	margin: 0;
+	color: var(--blue-slate);
+	font-size: 0.92rem;
 	font-weight: 700;
-	letter-spacing: 0.16em;
+	letter-spacing: 0.08em;
 	text-transform: uppercase;
 }
 
@@ -1296,14 +1296,13 @@ a {
 
 .profile-copy {
 	display: grid;
-	gap: 1.2rem;
+	gap: 1.5rem;
 	padding-top: 1rem;
 	max-width: 38rem;
 }
 
 .profile-section {
 	display: grid;
-	gap: 0.35rem;
 	border: 1px solid transparent;
 	transition: border-color 160ms ease, background-color 160ms ease,
 		box-shadow 160ms ease;
@@ -1375,6 +1374,7 @@ a {
 	flex-wrap: wrap;
 	gap: 0.85rem;
 	align-items: center;
+	padding-top: 1rem;
 }
 
 .upload-button {
