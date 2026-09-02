@@ -10,7 +10,11 @@ import {
 	toReadableJobText,
 } from "@/lib/extract/job-heuristic";
 import { buildJobExtractionNote } from "@/lib/extract/notes";
-import { generateStructured, hasOpenAIKey } from "@/lib/extract/openai";
+import {
+	generateStructured,
+	hasOpenAIKey,
+	recordExtractionFailure,
+} from "@/lib/extract/openai";
 import { jobExtractionSchema, type JobExtraction } from "@/lib/extract/schemas";
 import type {
 	ExtractionFallbackReason,
@@ -89,6 +93,7 @@ export async function extractJobOpportunity(
 	const heuristic = extractJobFromHtml(html, sourceUrl);
 	let extractionSource: JobExtractionResult["extractionSource"] = "heuristic";
 	let fallbackReason: ExtractionFallbackReason = "no-key";
+	let failureDetail: string | undefined;
 	let opportunity = heuristic;
 
 	if (hasOpenAIKey()) {
@@ -97,13 +102,18 @@ export async function extractJobOpportunity(
 			opportunity = mergeJobExtraction(heuristic, llm);
 			extractionSource = "llm";
 			fallbackReason = null;
-		} catch {
+		} catch (error) {
 			fallbackReason = "llm-error";
+			failureDetail = recordExtractionFailure(error);
 		}
 	}
 
 	return {
-		extractionNote: buildJobExtractionNote(extractionSource, fallbackReason),
+		extractionNote: buildJobExtractionNote(
+			extractionSource,
+			fallbackReason,
+			failureDetail,
+		),
 		extractionSource,
 		opportunity,
 	};

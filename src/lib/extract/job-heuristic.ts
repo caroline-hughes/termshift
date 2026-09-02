@@ -403,25 +403,49 @@ export function buildImportedOpportunityId(sourceUrl: string) {
 		.slice(0, 18)}`;
 }
 
+export function compactJobPosting(jobPosting: Record<string, unknown>) {
+	const description = jobPosting.description;
+	const compact: Record<string, unknown> = {
+		title: jobPosting.title,
+		hiringOrganization: jobPosting.hiringOrganization,
+		jobLocation: jobPosting.jobLocation,
+		employmentType: jobPosting.employmentType,
+		baseSalary: jobPosting.baseSalary,
+		datePosted: jobPosting.datePosted,
+		validThrough: jobPosting.validThrough,
+	};
+
+	if (typeof description === "string" && description.trim()) {
+		compact.description = truncateText(stripTags(description), 1_500);
+	}
+
+	return compact;
+}
+
 export function toReadableJobText(html: string) {
 	const jsonLdObjects = extractJsonLdObjects(html);
 	const jobPosting = findJobPosting(jsonLdObjects);
 	const title = extractTagContent(html, "title");
-	const readableBody = stripTags(stripScriptsAndStyles(html));
-
-	return truncateText(
-		[
-			jobPosting ? JSON.stringify(jobPosting) : "",
-			title,
-			extractMeta(html, "og:title"),
-			extractMeta(html, "og:description"),
-			extractMeta(html, "description"),
-			readableBody,
-		]
-			.filter(Boolean)
-			.join("\n"),
-		14_000,
+	const ogTitle = extractMeta(html, "og:title");
+	const description = extractMeta(html, "description");
+	const ogDescription = extractMeta(html, "og:description");
+	const body = truncateText(
+		stripTags(stripScriptsAndStyles(html)),
+		6_000,
 	);
+
+	return [
+		jobPosting
+			? `JSON-LD JobPosting:\n${truncateText(JSON.stringify(compactJobPosting(jobPosting)), 4_000)}`
+			: "",
+		title ? `Title: ${title}` : "",
+		ogTitle ? `og:title: ${ogTitle}` : "",
+		description ? `description: ${description}` : "",
+		ogDescription ? `og:description: ${ogDescription}` : "",
+		body ? `Page text:\n${body}` : "",
+	]
+		.filter(Boolean)
+		.join("\n\n");
 }
 
 export function extractJobFromHtml(

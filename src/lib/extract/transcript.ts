@@ -9,7 +9,11 @@ import {
 	uniqueIds,
 } from "@/lib/extract/catalog";
 import { buildTranscriptExtractionNote } from "@/lib/extract/notes";
-import { generateStructured, hasOpenAIKey } from "@/lib/extract/openai";
+import {
+	generateStructured,
+	hasOpenAIKey,
+	recordExtractionFailure,
+} from "@/lib/extract/openai";
 import { transcriptExtractionSchema } from "@/lib/extract/schemas";
 import { extractTranscriptHeuristically } from "@/lib/extract/transcript-heuristic";
 import { truncateText } from "@/lib/extract/html";
@@ -117,6 +121,7 @@ export function studentProfileFromExtraction(
 	fileName: string,
 	source: ExtractionSource,
 	fallbackReason: ExtractionFallbackReason,
+	failureDetail?: string,
 ): StudentProfile {
 	const completedCourseIds = uniqueIds(
 		extraction.completedCourses.map((course) => mapCourseCodeToId(course.code)),
@@ -167,6 +172,7 @@ export function studentProfileFromExtraction(
 			details,
 			source,
 			fallbackReason,
+			failureDetail,
 		),
 		extractionSource: source,
 		remainingRequirements,
@@ -195,6 +201,7 @@ export async function extractTranscriptProfile(
 	let extraction = heuristic;
 	let extractionSource: ExtractionSource = "heuristic";
 	let fallbackReason: ExtractionFallbackReason = "no-key";
+	let failureDetail: string | undefined;
 
 	if (hasOpenAIKey()) {
 		try {
@@ -211,8 +218,9 @@ export async function extractTranscriptProfile(
 			});
 			extractionSource = "llm";
 			fallbackReason = null;
-		} catch {
+		} catch (error) {
 			fallbackReason = "llm-error";
+			failureDetail = recordExtractionFailure(error);
 		}
 	}
 
@@ -221,6 +229,7 @@ export async function extractTranscriptProfile(
 		fileName,
 		extractionSource,
 		fallbackReason,
+		failureDetail,
 	);
 
 	return {

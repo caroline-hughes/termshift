@@ -1,12 +1,17 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { extractJobFromHtml } from "../src/lib/extract/job-heuristic";
+import {
+	extractJobFromHtml,
+	toReadableJobText,
+} from "../src/lib/extract/job-heuristic";
 import {
 	formatScore,
 	mean,
 	scalarScore,
 	setF1,
 } from "../src/lib/extract/metrics";
+import { buildJobExtractionNote } from "../src/lib/extract/notes";
+import { describeExtractionFailure } from "../src/lib/extract/openai";
 import { extractTranscriptProfileHeuristically } from "../src/lib/extract/transcript";
 
 type JobGolden = {
@@ -200,6 +205,60 @@ function printSection(title: string, results: CaseResult[]) {
 	return sectionMean;
 }
 
+function assertJobLlmPromptBudget() {
+	const amazon = readFileSync(
+		path.join(FIXTURES, "jobs", "amazon-robotics.html"),
+		"utf8",
+	);
+	const spa = `<!doctype html><html><head><title>Software Engineer Intern</title><meta name="description" content="Summer 2027 internship in Redmond."></head><body><div id="root">${"x".repeat(700_000)}</div></body></html>`;
+
+	const amazonPrompt = toReadableJobText(amazon);
+	const spaPrompt = toReadableJobText(spa);
+
+	if (!amazonPrompt.includes("JSON-LD JobPosting")) {
+		throw new Error("Amazon LLM prompt should prefer JSON-LD JobPosting.");
+	}
+	if (amazonPrompt.length > 12_000) {
+		throw new Error(`Amazon LLM prompt too large: ${amazonPrompt.length}`);
+	}
+	if (!spaPrompt.includes("Software Engineer Intern")) {
+		throw new Error("SPA LLM prompt should keep the page title.");
+	}
+	if (!spaPrompt.includes("Summer 2027 internship in Redmond.")) {
+		throw new Error("SPA LLM prompt should keep the meta description.");
+	}
+	if (spaPrompt.length > 8_000) {
+		throw new Error(`SPA LLM prompt dumped the page body: ${spaPrompt.length}`);
+	}
+
+	console.log(
+		`\nLLM prompt budget\n  amazon-robotics                    ${amazonPrompt.length} chars\n  synthetic-spa                      ${spaPrompt.length} chars`,
+	);
+}
+
+function assertFailureNotes() {
+	const timeout = describeExtractionFailure(
+		Object.assign(new Error("The operation was aborted due to timeout"), {
+			name: "TimeoutError",
+		}),
+	);
+	const schema = describeExtractionFailure(
+		new Error("No object generated: response did not match schema"),
+	);
+	const openai = describeExtractionFailure(new Error("502 Bad Gateway"));
+
+	if (timeout !== "timeout" || schema !== "schema" || openai !== "OpenAI error") {
+		throw new Error(
+			`Unexpected failure labels: timeout=${timeout} schema=${schema} openai=${openai}`,
+		);
+	}
+
+	const note = buildJobExtractionNote("heuristic", "llm-error", "timeout");
+	if (!note.includes("(timeout)")) {
+		throw new Error("Job fallback note should include the short failure reason.");
+	}
+}
+
 async function main() {
 	const jobGoldens = loadJson<JobGolden[]>("goldens/jobs.json");
 	const transcriptGoldens = loadJson<TranscriptGolden[]>(
@@ -208,6 +267,9 @@ async function main() {
 
 	console.log("TermShift extraction evals");
 	console.log("Mode: heuristic fallback against golden fixtures (no live LLM)");
+
+	assertJobLlmPromptBudget();
+	assertFailureNotes();
 
 	const jobResults = jobGoldens.map(scoreJob);
 	const transcriptResults = transcriptGoldens.map(scoreTranscript);
