@@ -182,7 +182,16 @@ type ScenarioReturnState = {
 };
 
 type ParseJobResponse = {
+	extractionNote?: string;
+	extractionSource?: "heuristic" | "llm";
 	opportunity: WorkOpportunity;
+};
+
+type ParseTranscriptResponse = {
+	extractionNote?: string;
+	extractionSource?: "heuristic" | "llm";
+	profile: StudentProfile;
+	remainingRequirements?: string[];
 };
 
 type RailSectionKey = "blocks" | "insights" | "savedScenarios";
@@ -797,6 +806,42 @@ async function extractUploadText(file: File) {
 	}
 
 	return pages.join("\n");
+}
+
+async function extractTextFromUrl(url: string, fileName: string) {
+	const response = await fetch(url);
+	if (!response.ok) {
+		throw new Error("Unable to open the example degree audit.");
+	}
+
+	const blob = await response.blob();
+	const file = new File([blob], fileName, {
+		type: blob.type || "application/pdf",
+	});
+	return extractUploadText(file);
+}
+
+async function requestTranscriptProfile(text: string, fileName: string) {
+	const response = await fetch("/api/parse-transcript", {
+		body: JSON.stringify({ fileName, text }),
+		headers: {
+			"Content-Type": "application/json",
+		},
+		method: "POST",
+	});
+	const payload = (await response.json()) as
+		| ParseTranscriptResponse
+		| { error?: string };
+
+	if (!response.ok || !("profile" in payload)) {
+		throw new Error(
+			payload && "error" in payload && payload.error
+				? payload.error
+				: "TermShift could not extract that transcript yet.",
+		);
+	}
+
+	return payload;
 }
 
 function buildScenarioState(
@@ -2488,7 +2533,9 @@ export function TermShiftApp() {
 			setBrowseOpportunityId(preview.id);
 			setImportedJobForm((current) => ({
 				...current,
-				message: "Imported listing ready to test in plan.",
+				message:
+					payload.extractionNote ??
+					"Imported listing ready to test in plan.",
 				status: "idle",
 			}));
 		} catch (error) {
@@ -2613,11 +2660,41 @@ export function TermShiftApp() {
 			try {
 				let extractedText = "";
 
-				if (!sampleAudit && pendingUpload) {
+				if (sampleAudit) {
+					try {
+						extractedText = await extractTextFromUrl(
+							sampleAudit.url,
+							fileName,
+						);
+					} catch {
+						extractedText = "";
+					}
+				} else if (pendingUpload) {
 					try {
 						extractedText = await extractUploadText(pendingUpload);
 					} catch {
 						extractedText = "";
+					}
+				}
+
+				if (extractedText.trim()) {
+					try {
+						const parsed = await requestTranscriptProfile(
+							extractedText,
+							fileName,
+						);
+						const nextProfile = applyIdentityToProfile(
+							parsed.profile,
+							nextIdentity,
+						);
+
+						return {
+							message: nextProfile.parserNote,
+							nextProfile,
+						};
+					} catch {
+						// Fall through to the local parser so a missing key or
+						// a failed extraction never blocks onboarding.
 					}
 				}
 
@@ -2714,10 +2791,25 @@ export function TermShiftApp() {
 				}
 			}
 
-			const baseProfile =
+			let baseProfile =
 				useSeededDemo || !pendingUpload
 					? buildDemoProfile(fileName)
 					: buildProfileFromUpload(fileName, extractedText);
+
+			if (!useSeededDemo && extractedText.trim()) {
+				try {
+					const parsed = await requestTranscriptProfile(
+						extractedText,
+						fileName,
+					);
+					baseProfile = parsed.profile;
+				} catch {
+					baseProfile = buildProfileFromUpload(
+						fileName,
+						extractedText,
+					);
+				}
+			}
 			const nextProfile = applyIdentityToProfile(baseProfile, identity);
 			const nextUploadedDocumentUrl =
 				useSeededDemo || !pendingUpload
@@ -3500,6 +3592,30 @@ export function TermShiftApp() {
 								profile.uploadedFileName
 							)}
 						</span>
+						{profile.parserNote ? (
+							<p className="inline-note inline-note--ready">
+								{profile.parserNote}
+							</p>
+						) : null}
+						{profile.remainingRequirements &&
+						profile.remainingRequirements.length > 0 ? (
+							<p>
+								<span className="profile-label">
+									Remaining requirements
+								</span>
+								<span className="profile-value">
+									{profile.remainingRequirements
+										.slice(0, 8)
+										.join(", ")}
+									{profile.remainingRequirements.length > 8
+										? ` +${
+												profile.remainingRequirements
+													.length - 8
+											} more`
+										: ""}
+								</span>
+							</p>
+						) : null}
 						<div className="profile-actions-row profile-actions-row--stacked">
 							<label className="plan-action-button upload-button">
 								Replace Upload

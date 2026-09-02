@@ -11,7 +11,7 @@ const dmSans = DM_Sans({
 export const metadata: Metadata = {
   title: "TermShift",
   description:
-    "A co-op planning MVP for testing how work terms change a student's degree path.",
+    "Plan co-ops and internships against your degree path. TermShift extracts transcripts and job postings, then models how a work term changes graduation.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

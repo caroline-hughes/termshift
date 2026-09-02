@@ -1,0 +1,66 @@
+[
+	{
+		"id": "amazon-robotics",
+		"sourceUrl": "https://example.com/jobs/amazon-robotics",
+		"expected": {
+			"blockType": "work-term",
+			"company": "Amazon",
+			"compensation": "",
+			"focusAreas": ["Robotics", "Distributed systems", "Systems"],
+			"location": "Sunnyvale, CA",
+			"preferredCourseIds": ["cs3000", "cs3100", "cs3650", "eece2310"],
+			"termEndId": "2027-fall",
+			"termLabel": "July-December 2027",
+			"termStartId": "2027-summer2",
+			"title": "Robotics Software Development Engineer Intern/Co-op"
+		}
+	},
+	{
+		"id": "nvidia-dynamo",
+		"sourceUrl": "https://example.com/jobs/nvidia-dynamo",
+		"expected": {
+			"blockType": "internship",
+			"company": "NVIDIA AI",
+			"compensation": "$20-$71/hr",
+			"focusAreas": ["Distributed systems", "AI infrastructure", "Systems"],
+			"location": "Santa Clara, CA",
+			"preferredCourseIds": ["cs3000", "cs3100", "cs3650", "ds3000"],
+			"termEndId": "2027-fall",
+			"termLabel": "Fall 2027",
+			"termStartId": "2027-fall",
+			"title": "Software Engineering Intern, Dynamo"
+		}
+	},
+	{
+		"id": "zipline-intern",
+		"sourceUrl": "https://example.com/jobs/zipline-intern",
+		"expected": {
+			"blockType": "internship",
+			"company": "Zipline",
+			"compensation": "$54/hr",
+			"focusAreas": ["Robotics", "Platform engineering", "Systems"],
+			"location": "South San Francisco, CA",
+			"preferredCourseIds": ["cs3000", "cs3100", "cs3650", "eece2310"],
+			"termEndId": "2027-fall",
+			"termLabel": "July-December 2027",
+			"termStartId": "2027-summer2",
+			"title": "Software Engineer Intern"
+		}
+	},
+	{
+		"id": "notion-intern",
+		"sourceUrl": "https://example.com/jobs/notion-intern",
+		"expected": {
+			"blockType": "internship",
+			"company": "Notion",
+			"compensation": "",
+			"focusAreas": ["Full-stack", "Systems", "Product engineering"],
+			"location": "San Francisco, CA",
+			"preferredCourseIds": ["cs3000", "softwareB", "softwareD", "cs3800"],
+			"termEndId": "2027-fall",
+			"termLabel": "Fall 2027",
+			"termStartId": "2027-fall",
+			"title": "Software Engineer Intern"
+		}
+	}
+]

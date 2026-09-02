@@ -1,0 +1,75 @@
+Graduate Degree Audit
+Columbia University
+Jane Doe   UNI: jd4821
+August 6, 2026  9:12 am
+Synthetic test copy generated for product development. Not an official university record.
+Page 1
+M.S. in Artificial Intelligence
+Concentration: AI & Advanced Computing
+Student:
+Jane Doe
+School:
+The Fu Foundation School of Engineering and Applied Science
+Program Start:
+Fall 2026
+Status:
+First semester in progress
+Total Points Required:
+30
+Points Completed:
+0
+Points In Progress:
+12
+Remaining After This Term:
+18
+Current Registration - Fall 2026
+Course
+Title
+Requirement Area
+Points
+COMS W4701
+Artificial Intelligence
+Core AI requirement
+3
+COMS W4771
+Machine Learning
+Core AI requirement
+3
+COMS W4705
+Natural Language Processing
+Core AI requirement
+3
+COMS W4776
+Neural Networks and Deep Learning
+AI & Advanced Computing concentration
+3
+ENGI E4000
+Professional Development and Leadership
+Required 0-credit milestone by end of second
+semester
+0
+Remaining Program Requirements
+Requirement
+Status
+Remaining
+Ethical AI core
+Not yet started
+3 points
+AI & Advanced Computing
+concentration
+1 of 4 courses in progress
+9 points, including at least 1 additional CS course and 2
+engineering courses
+General electives / capstone / research
+Not yet started
+6 points
+Three-semester sequence milestone
+On track
+Maintain core completion by the end of the second term
+Program Notes
+This synthetic audit follows Columbia Engineering's published M.S. in Artificial Intelligence structure: 30 points total, 12 points
+of core AI coursework, 12 points in a concentration, and 6 points of electives, capstone, or research. The AI & Advanced
+Computing concentration requires 4 courses total with a minimum of 2 AI-related Computer Science courses and 2 AI-related
+non-CS engineering courses.
+ENGI E4000 is shown as a required 0-credit milestone because the official curriculum states it must be completed by the end of
+the second semester.
