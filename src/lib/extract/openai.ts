@@ -19,14 +19,42 @@ function sanitizeErrorMessage(message: string) {
 		.replace(/Bearer\s+\S+/gi, "Bearer [redacted]")
 		.replace(/\s+/g, " ")
 		.trim()
-		.slice(0, 200);
+		.slice(0, 160);
+}
+
+function collectErrorMessages(error: unknown) {
+	const parts: string[] = [];
+	let current: unknown = error;
+	const seen = new Set<unknown>();
+
+	while (current && typeof current === "object" && !seen.has(current)) {
+		seen.add(current);
+		if (current instanceof Error && current.message.trim()) {
+			parts.push(current.message);
+		}
+
+		const record = current as { cause?: unknown };
+		current = record.cause;
+	}
+
+	if (parts.length === 0 && error != null) {
+		parts.push(String(error));
+	}
+
+	return sanitizeErrorMessage(parts.join(" — "));
+}
+
+function formatFailureDetail(bucket: string, message: string) {
+	if (!message) return bucket;
+	if (message.toLowerCase().startsWith(bucket.toLowerCase())) {
+		return message;
+	}
+	return `${bucket}: ${message}`;
 }
 
 export function describeExtractionFailure(error: unknown): string {
 	const name = error instanceof Error ? error.name : "";
-	const message = sanitizeErrorMessage(
-		error instanceof Error ? error.message : String(error),
-	);
+	const message = collectErrorMessages(error);
 	const combined = `${name} ${message}`.toLowerCase();
 
 	if (
@@ -37,7 +65,7 @@ export function describeExtractionFailure(error: unknown): string {
 		combined.includes("timed out") ||
 		combined.includes("aborted")
 	) {
-		return "timeout";
+		return formatFailureDetail("timeout", message);
 	}
 
 	if (
@@ -48,7 +76,7 @@ export function describeExtractionFailure(error: unknown): string {
 		combined.includes("typevalidation") ||
 		combined.includes("zod")
 	) {
-		return "schema";
+		return formatFailureDetail("schema", message);
 	}
 
 	if (
@@ -57,22 +85,19 @@ export function describeExtractionFailure(error: unknown): string {
 		combined.includes("unauthorized") ||
 		combined.includes("401")
 	) {
-		return "OpenAI authentication error";
+		return formatFailureDetail("OpenAI authentication error", message);
 	}
 
 	if (combined.includes("429") || combined.includes("rate limit")) {
-		return "OpenAI rate limit";
+		return formatFailureDetail("OpenAI rate limit", message);
 	}
 
-	return "OpenAI error";
+	return formatFailureDetail("OpenAI error", message);
 }
 
 export function recordExtractionFailure(error: unknown) {
 	const reason = describeExtractionFailure(error);
-	const message = sanitizeErrorMessage(
-		error instanceof Error ? error.message : String(error),
-	);
-	console.error(`Structured extraction failed (${reason}): ${message}`);
+	console.error(`Structured extraction failed (${reason})`);
 	return reason;
 }
 

@@ -245,17 +245,35 @@ function assertFailureNotes() {
 	const schema = describeExtractionFailure(
 		new Error("No object generated: response did not match schema"),
 	);
-	const openai = describeExtractionFailure(new Error("502 Bad Gateway"));
+	const openai = describeExtractionFailure(new Error("insufficient_quota"));
+	const redacted = describeExtractionFailure(
+		new Error("Request failed with key sk-testsecretvalue123"),
+	);
 
-	if (timeout !== "timeout" || schema !== "schema" || openai !== "OpenAI error") {
-		throw new Error(
-			`Unexpected failure labels: timeout=${timeout} schema=${schema} openai=${openai}`,
-		);
+	if (!timeout.startsWith("timeout")) {
+		throw new Error(`Expected timeout detail, got: ${timeout}`);
+	}
+	if (!schema.startsWith("schema") || !schema.includes("did not match schema")) {
+		throw new Error(`Expected schema detail, got: ${schema}`);
+	}
+	if (
+		!openai.startsWith("OpenAI error:") ||
+		!openai.includes("insufficient_quota")
+	) {
+		throw new Error(`Expected OpenAI error with message, got: ${openai}`);
+	}
+	if (
+		redacted.includes("sk-testsecretvalue123") ||
+		!redacted.includes("[redacted]")
+	) {
+		throw new Error(`API keys must be redacted in failure notes: ${redacted}`);
 	}
 
-	const note = buildJobExtractionNote("heuristic", "llm-error", "timeout");
-	if (!note.includes("(timeout)")) {
-		throw new Error("Job fallback note should include the short failure reason.");
+	const note = buildJobExtractionNote("heuristic", "llm-error", openai);
+	if (!note.includes("(OpenAI error: insufficient_quota)")) {
+		throw new Error(
+			`Job fallback note should include the sanitized error message: ${note}`,
+		);
 	}
 }
 
