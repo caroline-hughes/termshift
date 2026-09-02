@@ -9,6 +9,7 @@ export type CourseBucket =
   | "capstone";
 export type SpecialBlockType = "work-term" | "internship" | "time-off";
 export type CourseStatus = "completed" | "in-progress" | "planned";
+export type ExtractionSource = "heuristic" | "llm";
 
 export interface AcademicTerm {
   id: string;
@@ -44,6 +45,8 @@ export interface StudentProfile {
   parserNote: string;
   uploadedFileName: string;
   uploadedAt: string;
+  extractionSource?: ExtractionSource;
+  remainingRequirements?: string[];
 }
 
 export interface PlacedBlock {

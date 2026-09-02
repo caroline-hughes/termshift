@@ -1,0 +1,171 @@
+Academic Transcript
+NORTHEASTERN UNIVERSITY
+Student
+Program
+Issued
+001081764    Caroline Hughes
+B.S. in Computer Science
+May 22, 2026 4:14 pm
+Synthetic test copy generated for product development. Not an official university record.
+Page 1
+Fall 2024
+Course
+Title
+Credits
+Grade
+CS 1200
+First Year Seminar
+1.00
+A
+CS 1800/1802
+Discrete Structures + Seminar
+5.00
+A
+CS 2000/2001
+Intro to Program Design + Lab
+5.00
+A-
+ENGW 1111
+First-Year Writing
+4.00
+A
+MATH 1365
+Introduction to Mathematical Reasoning
+4.00
+A-
+Semester Credits: 19.00    Term GPA: 3.86
+Spring 2025
+Course
+Title
+Credits
+Grade
+CS 2100/2101
+Program Design and Implementation 1 + Lab
+5.00
+A-
+MATH 1341
+Calculus 1 for Science and Engineering
+4.00
+A
+SCIENCE I
+Science Requirement I
+4.00
+A-
+GEN EL 1
+General Elective
+4.00
+A
+Semester Credits: 17.00    Term GPA: 3.88
+Summer 1 2025
+Course
+Title
+Credits
+Grade
+CS 3000
+Algorithms and Data
+4.00
+A-
+GEN EL 2
+General Elective
+4.00
+A
+Semester Credits: 8.00    Term GPA: 3.85
+
+Academic Transcript
+NORTHEASTERN UNIVERSITY
+Student
+Program
+Issued
+001081764    Caroline Hughes
+B.S. in Computer Science
+May 22, 2026 4:14 pm
+Synthetic test copy generated for product development. Not an official university record.
+Page 2
+Summer 2 2025
+Course
+Title
+Credits
+Grade
+GEN EL 3
+General Elective
+4.00
+A
+GEN EL 4
+General Elective
+4.00
+A-
+Semester Credits: 8.00    Term GPA: 3.84
+Fall 2025
+Course
+Title
+Credits
+Grade
+CS 3100/3101
+Program Design and Implementation 2 + Lab
+5.00
+A-
+DS 3000
+Foundations of Data Science
+4.00
+A
+CS 2800
+Logic and Computation
+4.00
+A-
+SCIENCE II
+Science Requirement II
+4.00
+B+
+Semester Credits: 17.00    Term GPA: 3.73
+Cumulative Summary
+Credits earned
+Credits in progress
+Cumulative GPA
+Expected graduation
+69.00
+17.00
+3.82
+Spring 2027
+Courses in Progress
+Spring 2026
+ CS 1210
+Professional Development for Khoury Co-op
+1.00
+IP
+CS 3650
+Computer Systems
+4.00
+IP
+CS 4400
+Programming Languages
+4.00
+IP
+KHOURY EL 1
+Khoury Approved Elective
+4.00
+IP
+COMM 1112
+Public Speaking
+4.00
+IP
+Future Registration
+Summer 1 2026
+ EECE 2310/2311
+Digital Design and Computer Architecture + Lab
+5.00
+RG
+GEN EL 5
+General Elective
+4.00
+RG
+Summer 2 2026
+ ENGW 3302
+Advanced Writing in Technical Professions
+4.00
+RG
+GEN EL 7
+General Elective
+4.00
+RG
+This seeded planning snapshot keeps Summer 2 2026 active with two planned courses so the modeled baseline can conclude in Spring
+2027.

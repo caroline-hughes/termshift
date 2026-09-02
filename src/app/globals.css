@@ -1308,6 +1308,14 @@ a {
 		box-shadow 160ms ease;
 }
 
+.profile-section .inline-note {
+	margin-top: 0.45rem;
+}
+
+.profile-section .profile-label + .profile-value + p {
+	margin-top: 0.35rem;
+}
+
 .profile-section.is-highlighted {
 	border-color: var(--muted-teal);
 	background: rgb(146 182 177 / 0.12);

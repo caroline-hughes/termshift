@@ -1,0 +1,111 @@
+[
+	{
+		"id": "caroline-hughes-northeastern",
+		"fileName": "caroline-hughes-northeastern-unofficial-transcript.pdf",
+		"textFile": "caroline-hughes-northeastern.txt",
+		"expected": {
+			"school": "Northeastern University",
+			"program": "B.S. in Computer Science",
+			"studentName": "Caroline Hughes",
+			"expectedGraduation": "Spring 2027",
+			"completedCourseCodes": [
+				"CS 1200",
+				"CS 1800/1802",
+				"CS 2000/2001",
+				"ENGW 1111",
+				"MATH 1365",
+				"CS 2100/2101",
+				"MATH 1341",
+				"SCIENCE I",
+				"GEN EL 1",
+				"CS 3000",
+				"GEN EL 2",
+				"GEN EL 3",
+				"GEN EL 4",
+				"CS 3100/3101",
+				"DS 3000",
+				"CS 2800",
+				"SCIENCE II"
+			],
+			"inProgressCourseCodes": [
+				"CS 1210",
+				"CS 3650",
+				"CS 4400",
+				"KHOURY EL 1",
+				"COMM 1112"
+			],
+			"remainingRequirements": [
+				"EECE 2310/2311",
+				"GEN EL 5",
+				"CS 3800",
+				"DS 1300",
+				"CS 4700",
+				"CS 4820",
+				"ENGW 3302",
+				"CY 2550",
+				"KHOURY EL 2",
+				"GEN EL 6",
+				"GEN EL 7",
+				"CS 4530"
+			],
+			"mapped": {
+				"completedCourseIds": [
+					"cs1200",
+					"cs1800",
+					"cs2000",
+					"engw1111",
+					"math1365",
+					"cs2100",
+					"math1341",
+					"science1",
+					"genA",
+					"cs3000",
+					"genB",
+					"genC",
+					"genD",
+					"cs3100",
+					"ds3000",
+					"softwareA",
+					"science2"
+				],
+				"inProgressCourseIds": [
+					"cs1210",
+					"cs3650",
+					"softwareB",
+					"khoury1",
+					"presentation"
+				],
+				"lockedThroughTermId": "2026-spring",
+				"school": "Northeastern University",
+				"targetGraduation": "Spring 2027"
+			}
+		}
+	},
+	{
+		"id": "jane-doe-columbia-msai",
+		"fileName": "jane-doe-columbia-msai-degree-audit.pdf",
+		"textFile": "jane-doe-columbia-msai.txt",
+		"expected": {
+			"school": "Columbia University",
+			"program": "M.S. in Artificial Intelligence",
+			"studentName": "Jane Doe",
+			"expectedGraduation": "",
+			"completedCourseCodes": [],
+			"inProgressCourseCodes": [
+				"COMS W4701",
+				"COMS W4771",
+				"COMS W4705",
+				"COMS W4776",
+				"ENGI E4000"
+			],
+			"remainingRequirements": [
+				"Ethical AI core",
+				"AI & Advanced Computing concentration",
+				"General electives / capstone / research"
+			],
+			"mapped": {
+				"school": "Columbia University"
+			}
+		}
+	}
+]
