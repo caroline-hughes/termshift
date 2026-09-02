@@ -1,9 +1,14 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { zodSchema } from "ai";
 import {
 	extractJobFromHtml,
 	toReadableJobText,
 } from "../src/lib/extract/job-heuristic";
+import {
+	jobExtractionSchema,
+	transcriptExtractionSchema,
+} from "../src/lib/extract/schemas";
 import {
 	formatScore,
 	mean,
@@ -277,6 +282,75 @@ function assertFailureNotes() {
 	}
 }
 
+function assertOpenAiStrictObject(
+	pathLabel: string,
+	node: unknown,
+	issues: string[],
+) {
+	if (!node || typeof node !== "object") return;
+
+	const schema = node as {
+		additionalProperties?: unknown;
+		anyOf?: unknown[];
+		items?: unknown;
+		properties?: Record<string, unknown>;
+		required?: unknown;
+		type?: unknown;
+	};
+
+	if (schema.properties) {
+		const keys = Object.keys(schema.properties);
+		const required = Array.isArray(schema.required) ? schema.required : [];
+
+		for (const key of keys) {
+			if (!required.includes(key)) {
+				issues.push(`${pathLabel}.${key} must be listed in required`);
+			}
+		}
+
+		if (schema.additionalProperties !== false) {
+			issues.push(`${pathLabel} must set additionalProperties false`);
+		}
+
+		for (const [key, value] of Object.entries(schema.properties)) {
+			assertOpenAiStrictObject(`${pathLabel}.${key}`, value, issues);
+		}
+	}
+
+	if (schema.items) {
+		assertOpenAiStrictObject(`${pathLabel}[]`, schema.items, issues);
+	}
+
+	if (Array.isArray(schema.anyOf)) {
+		schema.anyOf.forEach((entry, index) => {
+			assertOpenAiStrictObject(`${pathLabel}.anyOf[${index}]`, entry, issues);
+		});
+	}
+}
+
+function assertNamedOpenAiStrictSchema(name: string, jsonSchema: unknown) {
+	const issues: string[] = [];
+	assertOpenAiStrictObject(name, jsonSchema, issues);
+	if (issues.length > 0) {
+		throw new Error(`${name} is not OpenAI-strict:\n- ${issues.join("\n- ")}`);
+	}
+}
+
+function assertOpenAiStrictSchemas() {
+	assertNamedOpenAiStrictSchema(
+		"jobExtractionSchema",
+		zodSchema(jobExtractionSchema).jsonSchema,
+	);
+	assertNamedOpenAiStrictSchema(
+		"transcriptExtractionSchema",
+		zodSchema(transcriptExtractionSchema).jsonSchema,
+	);
+
+	console.log(
+		"\nOpenAI strict schemas\n  jobExtractionSchema               required covers all properties\n  transcriptExtractionSchema        required covers all properties",
+	);
+}
+
 async function main() {
 	const jobGoldens = loadJson<JobGolden[]>("goldens/jobs.json");
 	const transcriptGoldens = loadJson<TranscriptGolden[]>(
@@ -288,6 +362,7 @@ async function main() {
 
 	assertJobLlmPromptBudget();
 	assertFailureNotes();
+	assertOpenAiStrictSchemas();
 
 	const jobResults = jobGoldens.map(scoreJob);
 	const transcriptResults = transcriptGoldens.map(scoreTranscript);

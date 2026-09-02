@@ -22,7 +22,7 @@ import type {
 } from "@/lib/extract/types";
 import type { WorkOpportunity } from "@/lib/termshift-opportunities";
 
-function cleanString(value: string | undefined, fallback: string) {
+function cleanString(value: string | null | undefined, fallback: string) {
 	const trimmed = value?.trim() ?? "";
 	return trimmed ? trimmed : fallback;
 }
@@ -46,7 +46,8 @@ function mergeJobExtraction(
 		.map((area) => area.trim())
 		.filter(Boolean)
 		.slice(0, 3);
-	const compensation = llm.compensation?.trim() || heuristic.compensation;
+	const compensation =
+		llm.compensation?.trim() || heuristic.compensation || undefined;
 
 	return {
 		...heuristic,

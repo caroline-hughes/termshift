@@ -6,8 +6,8 @@ export type ExtractionFallbackReason = "llm-error" | "no-key" | null;
 
 export type ExtractedCourse = {
 	code: string;
-	grade?: string;
-	term?: string;
+	grade?: string | null;
+	term?: string | null;
 	title: string;
 };
 

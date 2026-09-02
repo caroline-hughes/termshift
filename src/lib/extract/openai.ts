@@ -113,6 +113,11 @@ export async function generateStructured<T extends z.ZodType>(
 		abortSignal: AbortSignal.timeout(LLM_TIMEOUT_MS),
 		model: openai(EXTRACTION_MODEL),
 		prompt: options.prompt,
+		providerOptions: {
+			openai: {
+				strictJsonSchema: true,
+			},
+		},
 		schema,
 		system: options.system,
 		temperature: 0,
