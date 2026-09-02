@@ -4,8 +4,12 @@ import type { z } from "zod";
 
 export const EXTRACTION_MODEL = "gpt-4o-mini";
 
+export function getOpenAIApiKey() {
+	return (process.env["OPENAI_API_KEY"] ?? "").trim();
+}
+
 export function hasOpenAIKey() {
-	return Boolean(process.env.OPENAI_API_KEY?.trim());
+	return Boolean(getOpenAIApiKey());
 }
 
 export async function generateStructured<T extends z.ZodType>(
@@ -13,7 +17,7 @@ export async function generateStructured<T extends z.ZodType>(
 	options: { prompt: string; system: string },
 ): Promise<z.infer<T>> {
 	const openai = createOpenAI({
-		apiKey: process.env.OPENAI_API_KEY,
+		apiKey: getOpenAIApiKey(),
 	});
 
 	const { object } = await generateObject({
