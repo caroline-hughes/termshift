@@ -22,6 +22,10 @@ import {
 } from "@/lib/pathwise-data";
 import { derivePlannerSnapshot } from "@/lib/pathwise-planner";
 import {
+	buildPlanCoachRequest,
+	getPlanCoachRequestKey,
+} from "@/lib/extract/plan-coach";
+import {
 	buildPlanAssessment,
 	type PlanInsight,
 } from "@/lib/termshift-plan-assessment";
@@ -948,6 +952,7 @@ export function TermShiftApp() {
 		useState(false);
 	const [pendingUpload, setPendingUpload] = useState<File | null>(null);
 	const [didHydrate, setDidHydrate] = useState(false);
+	const [planCoachNote, setPlanCoachNote] = useState<string | null>(null);
 	const insightItemRefs = useRef<Map<string, HTMLLIElement | null>>(
 		new Map(),
 	);
@@ -1245,6 +1250,65 @@ export function TermShiftApp() {
 					snapshot,
 			  })
 			: null;
+	const planCoachRequest = planAssessment
+		? buildPlanCoachRequest({
+				experimentMode: experimentMode || isViewingSavedScenario,
+				insights: planAssessment.insights,
+				issueCount: planAssessment.issueCount,
+				projectedGraduation: snapshot?.projectedGraduation ?? null,
+				selectedOpportunity:
+					experimentMode || isViewingSavedScenario
+						? selectedOpportunity
+						: null,
+				topIssueTexts: planAssessment.topIssueTexts,
+		  })
+		: null;
+	const planCoachRequestKey = planCoachRequest
+		? getPlanCoachRequestKey(planCoachRequest)
+		: "";
+
+	useEffect(() => {
+		if (!planCoachRequestKey) {
+			setPlanCoachNote(null);
+			return;
+		}
+
+		setPlanCoachNote(null);
+		const controller = new AbortController();
+		const timer = window.setTimeout(async () => {
+			try {
+				const response = await fetch("/api/plan-coach", {
+					body: planCoachRequestKey,
+					headers: {
+						"Content-Type": "application/json",
+					},
+					method: "POST",
+					signal: controller.signal,
+				});
+				if (!response.ok) {
+					return;
+				}
+
+				const payload = (await response.json()) as {
+					note?: string | null;
+				};
+				const note = payload.note?.trim() ?? "";
+				if (!controller.signal.aborted) {
+					setPlanCoachNote(note || null);
+				}
+			} catch {
+				if (!controller.signal.aborted) {
+					setPlanCoachNote(null);
+				}
+			}
+		}, 400);
+
+		return () => {
+			window.clearTimeout(timer);
+			controller.abort();
+		};
+	}, [planCoachRequestKey]);
+
 	const termIssueMap = planAssessment
 		? buildTermIssueMap(planAssessment.insights)
 		: new Map<string, PlanInsight[]>();
@@ -4221,6 +4285,21 @@ export function TermShiftApp() {
 											},
 										)}
 									</ul>
+									{planCoachNote ? (
+										<div className="plan-coach">
+											<p className="plan-coach-label">
+												Plan coach
+											</p>
+											<p className="plan-coach-note">
+												{planCoachNote}
+											</p>
+											<p className="plan-coach-caption">
+												Explains the findings above. It
+												does not add a new recommended
+												move.
+											</p>
+										</div>
+									) : null}
 								</div>
 							) : (
 								<p

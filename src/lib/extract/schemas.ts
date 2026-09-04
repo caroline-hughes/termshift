@@ -67,5 +67,14 @@ export const transcriptExtractionSchema = z.strictObject({
 	studentName: z.string().describe("Student name if present"),
 });
 
+export const planCoachSchema = z.strictObject({
+	note: z
+		.string()
+		.describe(
+			"2-4 sentence plain-language explanation of the provided Plan Insights only. Do not invent new recommended moves, courses, terms, or actions.",
+		),
+});
+
 export type JobExtraction = z.infer<typeof jobExtractionSchema>;
 export type TranscriptLlmExtraction = z.infer<typeof transcriptExtractionSchema>;
+export type PlanCoachExtraction = z.infer<typeof planCoachSchema>;

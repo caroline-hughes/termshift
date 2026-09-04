@@ -6,7 +6,12 @@ import {
 	toReadableJobText,
 } from "../src/lib/extract/job-heuristic";
 import {
+	buildPlanCoachPrompt,
+	buildPlanCoachRequest,
+} from "../src/lib/extract/plan-coach";
+import {
 	jobExtractionSchema,
+	planCoachSchema,
 	transcriptExtractionSchema,
 } from "../src/lib/extract/schemas";
 import {
@@ -345,9 +350,96 @@ function assertOpenAiStrictSchemas() {
 		"transcriptExtractionSchema",
 		zodSchema(transcriptExtractionSchema).jsonSchema,
 	);
+	assertNamedOpenAiStrictSchema(
+		"planCoachSchema",
+		zodSchema(planCoachSchema).jsonSchema,
+	);
 
 	console.log(
-		"\nOpenAI strict schemas\n  jobExtractionSchema               required covers all properties\n  transcriptExtractionSchema        required covers all properties",
+		"\nOpenAI strict schemas\n  jobExtractionSchema               required covers all properties\n  transcriptExtractionSchema        required covers all properties\n  planCoachSchema                   required covers all properties",
+	);
+}
+
+function assertPlanCoachPrompt() {
+	const request = buildPlanCoachRequest({
+		experimentMode: true,
+		insights: [
+			{
+				description:
+					"CS 3650 comes before CS 3000. Move it later in the plan.",
+				id: "prereq-2026-fall",
+				title: "Prerequisite order",
+				tone: "critical",
+			},
+			{
+				description:
+					"Projected graduation pushed to Spring 2029. Take Summer 1 or Summer 2 2028 courses to recover time.",
+				id: "timeline-shift",
+				title: "Timeline",
+				tone: "neutral",
+			},
+		],
+		issueCount: 1,
+		projectedGraduation: "Spring 2029",
+		selectedOpportunity: {
+			blockType: "work-term",
+			company: "Amazon Robotics",
+		},
+		topIssueTexts: [
+			"CS 3650 comes before CS 3000. Move it later in the plan.",
+		],
+	});
+	const { prompt, system } = buildPlanCoachPrompt(request);
+	const combined = `${system}\n${prompt}`;
+
+	if (request.selectedOpportunity?.blockType !== "work-term") {
+		throw new Error("Coach request should keep an explicit work-term block.");
+	}
+	if (!system.includes("Do not invent new recommended moves")) {
+		throw new Error("Coach system prompt must forbid invented moves.");
+	}
+	if (!prompt.includes("CS 3650 comes before CS 3000")) {
+		throw new Error("Coach prompt should include the deterministic insight.");
+	}
+	if (!prompt.includes("Amazon Robotics")) {
+		throw new Error("Coach prompt should include the selected company.");
+	}
+	if (!prompt.includes("Spring 2029")) {
+		throw new Error("Coach prompt should include projected graduation.");
+	}
+	if (
+		combined.includes("scheduledCourses") ||
+		combined.includes("COURSE_MAP") ||
+		combined.includes("placedBlocks")
+	) {
+		throw new Error("Coach prompt must not send a full planner snapshot.");
+	}
+	if (prompt.length > 4_000) {
+		throw new Error(`Coach prompt too large: ${prompt.length}`);
+	}
+
+	const inferred = buildPlanCoachRequest({
+		experimentMode: false,
+		insights: [
+			{
+				description:
+					"You are on track academically under the current model. Projected graduation in Spring 2028.",
+				id: "status",
+				title: "Status",
+				tone: "neutral",
+			},
+		],
+		issueCount: 0,
+		projectedGraduation: "Spring 2028",
+		selectedOpportunity: { company: "Vector Systems" },
+		topIssueTexts: [],
+	});
+	if (inferred.selectedOpportunity?.blockType !== "work-term") {
+		throw new Error("Missing opportunity blockType should default to work-term.");
+	}
+
+	console.log(
+		`\nPlan coach prompt\n  fixture-insights                  ${request.insights.length} insights / ${prompt.length} chars`,
 	);
 }
 
@@ -363,6 +455,7 @@ async function main() {
 	assertJobLlmPromptBudget();
 	assertFailureNotes();
 	assertOpenAiStrictSchemas();
+	assertPlanCoachPrompt();
 
 	const jobResults = jobGoldens.map(scoreJob);
 	const transcriptResults = transcriptGoldens.map(scoreTranscript);
