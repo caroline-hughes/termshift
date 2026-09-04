@@ -1619,6 +1619,37 @@ a {
 	line-height: 1.35;
 }
 
+.plan-coach {
+	margin-top: 0.55rem;
+	padding: 0.68rem 0.74rem 0.76rem;
+	border: 1px dashed rgb(120 138 163 / 0.38);
+	border-radius: 1rem;
+	background: rgb(146 182 177 / 0.1);
+}
+
+.plan-coach-label {
+	margin: 0 0 0.3rem;
+	color: var(--harbor-teal);
+	font-size: 0.72rem;
+	font-weight: 700;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+}
+
+.plan-coach-note {
+	margin: 0;
+	color: var(--blue-slate);
+	font-size: 0.88rem;
+	line-height: 1.45;
+}
+
+.plan-coach-caption {
+	margin: 0.34rem 0 0;
+	color: var(--slate-grey);
+	font-size: 0.75rem;
+	line-height: 1.35;
+}
+
 .signal-list {
 	display: grid;
 	gap: 0.7rem;
